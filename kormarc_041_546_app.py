@@ -129,18 +129,19 @@ def get_kormarc_041_tag(isbn):
 
     try:
         root = ET.fromstring(response.content)
-        item = root.find("item")
+        ns = {"ns": "http://www.aladin.co.kr/ttb/apiguide.aspx"}
+        item = root.find("ns:item", namespaces=ns)
 
         # 초기값 설정
         title = ""
         original_title = ""
 
-        # ✅ 1단계: 알라딘 API 우선 사용
+        # ✅ 1단계: 알라딘 API 우선 사용 (네임스페이스 적용)
         if item is not None:
-            title = item.findtext("title", default="")
-            subinfo = item.find("subInfo")
+            title = item.findtext("ns:title", default="", namespaces=ns)
+            subinfo = item.find("ns:subInfo", namespaces=ns)
             if subinfo is not None:
-                ot = subinfo.find("originalTitle")
+                ot = subinfo.find("ns:originalTitle", namespaces=ns)
                 if ot is not None and ot.text:
                     original_title = ot.text
 
@@ -169,7 +170,7 @@ def get_kormarc_041_tag(isbn):
         return f"📕 예외 발생: {str(e)}", ""
 
 # Streamlit 인터페이스
-st.title("📘 KORMARC 041 & 546 태그 생성기 (알라딘 API + 웹 크롤링 보완)")
+st.title("📘 KORMARC 041 & 546 태그 생성기 (알라딘 API 우선 + 웹 크롤링 보완)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
