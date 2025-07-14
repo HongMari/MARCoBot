@@ -1,165 +1,68 @@
-import re
-import streamlit as st
 import requests
-import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
+import xml.etree.ElementTree as ET
 
-# 언어코드 → 한국어 표현
-ISDS_LANGUAGE_CODES = {
-    'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
-    'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
-    'und': '알 수 없음'
-}
-
-SUBJECT_TO_LANG = {
-    "일본": "jpn", "프랑스": "fre", "영미": "eng", "영국": "eng",
-    "독일": "ger", "중국": "chi", "러시아": "rus", "한국": "kor"
-}
-
-def infer_h_from_subject(subject: str) -> str:
-    for keyword, lang_code in SUBJECT_TO_LANG.items():
-        if keyword in subject:
-            return lang_code
-    return ""
-
-def detect_language(text):
-    text = re.sub(r'[\s\W_]+', '', text)
-    if not text:
-        return 'und'
-    first_char = text[0]
-    if '\uac00' <= first_char <= '\ud7a3':
-        return 'kor'
-    elif '\u3040' <= first_char <= '\u30ff':
-        return 'jpn'
-    elif '\u4e00' <= first_char <= '\u9fff':
-        return 'chi'
-    elif '\u0400' <= first_char <= '\u04FF':
-        return 'rus'
-    elif 'a' <= first_char.lower() <= 'z':
-        return 'eng'
+def detect_language_from_text(text):
+    text = text.lower()
+    if any(word in text for word in ["english", "영어"]):
+        return "eng"
+    elif any(word in text for word in ["korean", "한국어", "한글"]):
+        return "kor"
+    elif any(word in text for word in ["japanese", "일본어"]):
+        return "jpn"
+    elif any(word in text for word in ["chinese", "중국어"]):
+        return "chi"
+    elif any(word in text for word in ["french", "프랑스어"]):
+        return "fre"
+    elif any(word in text for word in ["german", "독일어"]):
+        return "ger"
     else:
-        return 'und'
+        return None
 
-# 웹 크롤링용 세션
-def get_aladin_subject_and_language_hint(isbn13: str):
-    session = requests.Session()
-    headers = {"User-Agent": "Mozilla/5.0"}
+def get_041_546_by_aladin_api_and_crawl(isbn13: str, ttbkey: str):
+    # Step 1: 알라딘 API 호출
+    api_url = (
+        f"http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx?"
+        f"ttbkey={ttbkey}&itemIdType=ISBN13&ItemId={isbn13}"
+        f"&output=xml&Version=20131101&OptResult=ebookList,reviewList"
+    )
+    response = requests.get(api_url)
+    root = ET.fromstring(response.text)
 
-    search_url = f"https://www.aladin.co.kr/search/wsearchresult.aspx?SearchTarget=All&SearchWord={isbn13}"
-    search_res = session.get(search_url, headers=headers)
-    if search_res.status_code != 200:
-        return "", ""
+    item = root.find("item")
+    if item is None:
+        raise ValueError("알라딘 API에서 item을 찾을 수 없습니다")
 
-    soup = BeautifulSoup(search_res.text, "html.parser")
-    first_link = soup.select_one("div.ss_book_box a.bo3")
-    if not first_link or not first_link["href"]:
-        return "", ""
+    # API에서 원제와 상품명 추출
+    title = item.findtext("title", "")
+    original_title = item.findtext("subInfo/originalTitle", "")
 
-    detail_url = "https://www.aladin.co.kr" + first_link["href"]
-    detail_res = session.get(detail_url, headers=headers)
-    if detail_res.status_code != 200:
-        return "", ""
+    def lang_detect(name, fallback_text):
+        lang = detect_language_from_text(name)
+        if not lang:
+            # 웹 크롤링 보완
+            try:
+                html = requests.get(f"https://www.aladin.co.kr/shop/wproduct.aspx?ItemId={item.findtext('itemId')}").text
+                soup = BeautifulSoup(html, "html.parser")
+                detail = soup.select_one("#Ere_prod_mconts_box").text
+                lang = detect_language_from_text(detail)
+            except Exception:
+                lang = None
+        return lang or fallback_text
 
-    soup = BeautifulSoup(detail_res.text, "html.parser")
-    page_text = soup.get_text(separator=" ", strip=True)
+    # 언어 감지 수행
+    lang_a = lang_detect(title, "und")
+    lang_h = lang_detect(original_title, "und") if original_title else None
 
-    subject = ""
-    cat = soup.select_one("#divCategory")
-    if cat:
-        subject = cat.get_text(" ", strip=True)
+    # 041 태그 구성
+    field_041 = f"041 0#$a{lang_a}" + (f"$h{lang_h}" if lang_h else "")
 
-    language_hint = ""
-    lang_patterns = {
-        "언어 : Japanese": "jpn", "Language : Japanese": "jpn",
-        "언어 : English": "eng", "Language : English": "eng",
-        "언어 : French": "fre", "Language : French": "fre",
-        "언어 : German": "ger", "Language : German": "ger",
-        "언어 : Chinese": "chi", "Language : Chinese": "chi",
-        "언어 : Korean": "kor", "Language : Korean": "kor",
-    }
-    for phrase, code in lang_patterns.items():
-        if phrase in page_text:
-            language_hint = code
-            break
+    # 546 태그 구성
+    desc = f"본문 언어는 {lang_a}"
+    if lang_h:
+        desc += f", 원작은 {lang_h}"
+    desc += "."
 
-    return subject, language_hint
+    field_546 = f"546 ##$a{desc}"
 
-def generate_546_from_041_kormarc(marc_041: str) -> str:
-    a_codes = []
-    h_code = None
-    for part in marc_041.split():
-        if part.startswith("$a"):
-            a_codes.append(part[2:])
-        elif part.startswith("$h"):
-            h_code = part[2:]
-
-    if len(a_codes) == 1:
-        a_lang = ISDS_LANGUAGE_CODES.get(a_codes[0], "알 수 없음")
-        if h_code:
-            h_lang = ISDS_LANGUAGE_CODES.get(h_code, "알 수 없음")
-            return f"{a_lang}로 씀, 원저는 {h_lang}임"
-        else:
-            return f"{a_lang}로 씀"
-    elif len(a_codes) > 1:
-        langs = [ISDS_LANGUAGE_CODES.get(code, "알 수 없음") for code in a_codes]
-        return f"{'、'.join(langs)} 병기"
-    else:
-        return "언어 정보 없음"
-
-# 전체 태그 생성
-def get_kormarc_041_tag(isbn):
-    isbn = isbn.strip().replace("-", "")
-    headers = {"User-Agent": "Mozilla/5.0"}
-    title, original_title, lang_a, lang_h = "", "", "", ""
-
-    # ✅ API 요청용 분리 세션
-    session_api = requests.Session()
-    try:
-        url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
-        params = {
-            "ttbkey": "ttbmary38642333002",
-            "itemIdType": "ISBN13",
-            "ItemId": isbn,
-            "output": "xml",
-            "Version": "20131101"
-        }
-        response = session_api.get(url, params=params, headers=headers)
-        root = ET.fromstring(response.content)
-        item = root.find("item")
-
-        if item is None:
-            raise Exception("item 없음")
-
-        title = item.findtext("title", default="")
-        subinfo = item.find("subInfo")
-        if subinfo is not None:
-            original_title = subinfo.findtext("originalTitle", default="")
-
-        lang_a = detect_language(title)
-        lang_h = detect_language(original_title) if original_title else ""
-
-    except Exception:
-        # Fallback: 크롤링으로 추정
-        subject, lang_hint = get_aladin_subject_and_language_hint(isbn)
-        lang_a = lang_hint
-        lang_h = infer_h_from_subject(subject)
-
-    marc_a = f"$a{lang_a or 'und'}"
-    marc_h = f"$h{lang_h}" if lang_h else ""
-    marc_041 = f"041 {marc_a} {marc_h}".strip()
-    marc_546 = generate_546_from_041_kormarc(marc_041)
-
-    return marc_041, marc_546
-
-# Streamlit 인터페이스
-st.title("📘 KORMARC 041 & 546 태그 생성기 (세션 분리 안정화)")
-
-isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
-if st.button("태그 생성"):
-    if isbn_input:
-        tag_041, tag_546 = get_kormarc_041_tag(isbn_input)
-        st.text(f"📄 생성된 041 태그: {tag_041}")
-        if tag_546:
-            st.text(f"📄 생성된 546 태그: {tag_546}")
-    else:
-        st.warning("ISBN을 입력해주세요.")
+    return field_041, field_546
