@@ -11,52 +11,60 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
-# 알라딘 주제분류 → 언어 코드 매핑
-SUBJECT_TO_LANG = {
-    "일본소설": "jpn", "일본문학": "jpn", "영미문학": "eng", "영국소설": "eng",
-    "프랑스소설": "fre", "프랑스문학": "fre", "독일문학": "ger", "중국소설": "chi",
-    "중국문학": "chi", "러시아문학": "rus", "한국소설": "kor", "한국문학": "kor"
-}
-
-# 크롤링으로 알라딘 주제 + 본문 언어 힌트 가져오기
+# 크롤링으로 알라딘 주제 + 본문 언어 힌트 가져오기 (검색 → 상세페이지)
 def get_aladin_subject_and_language_hint(isbn13: str):
-    url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn13}"
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
+    # ① 알라딘 검색 페이지에서 ISBN으로 도서 상세 URL 찾기
+    search_url = f"https://www.aladin.co.kr/search/wsearchresult.aspx?SearchTarget=All&SearchWord={isbn13}"
+    search_res = requests.get(search_url, headers=headers)
+    if search_res.status_code != 200:
         return "", ""
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    search_soup = BeautifulSoup(search_res.text, "html.parser")
+    first_link = search_soup.select_one("div.ss_book_box a.bo3")
+    if not first_link or not first_link["href"]:
+        return "", ""
 
-    # 주제분류
+    detail_url = "https://www.aladin.co.kr" + first_link["href"]
+
+    # ② 상세페이지 크롤링
+    detail_res = requests.get(detail_url, headers=headers)
+    if detail_res.status_code != 200:
+        return "", ""
+
+    soup = BeautifulSoup(detail_res.text, "html.parser")
+    page_text = soup.get_text(separator=" ", strip=True)
+
+    # ③ 주제분류 추출 (상단 카테고리 라인)
     subject = ""
-    subject_tag = soup.select_one("#divCategory > ul > li")
-    if subject_tag:
-        subject = subject_tag.get_text(strip=True)
+    category_div = soup.select_one("#divCategory")
+    if category_div:
+        subject = category_div.get_text(" ", strip=True)
 
-    # 본문 언어 힌트 (텍스트 탐색)
-    text = soup.get_text()
+    # ④ 언어 힌트 추출
     language_hint = ""
-    if "일본어로 된 책" in text or "일본어 원서" in text:
-        language_hint = "jpn"
-    elif "영어 원서" in text or "영어로 쓰인 책" in text:
-        language_hint = "eng"
-    elif "프랑스어로" in text or "프랑스어 원서" in text:
-        language_hint = "fre"
-    elif "독일어로 된 책" in text:
-        language_hint = "ger"
-    elif "중국어" in text or "중국어로 된 책" in text:
-        language_hint = "chi"
+    lang_patterns = {
+        "일본어": "jpn",
+        "Japanese": "jpn",
+        "영어": "eng",
+        "English": "eng",
+        "프랑스어": "fre",
+        "French": "fre",
+        "독일어": "ger",
+        "German": "ger",
+        "중국어": "chi",
+        "Chinese": "chi",
+        "한국어": "kor",
+        "Korean": "kor"
+    }
+
+    for pattern, code in lang_patterns.items():
+        if f"언어 : {pattern}" in page_text or f"Language : {pattern}" in page_text:
+            language_hint = code
+            break
 
     return subject, language_hint
-
-# 주제분류 → 언어코드 ($h)
-def infer_h_from_subject(subject: str) -> str:
-    for keyword, lang_code in SUBJECT_TO_LANG.items():
-        if keyword in subject:
-            return lang_code
-    return ""
 
 # fallback 언어 감지기 (유니코드 기반)
 def detect_language(text):
