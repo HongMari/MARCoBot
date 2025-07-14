@@ -3,49 +3,81 @@ import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
 
+# 언어코드 → 한국어 표현
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
-    'ara': '아랍어', 'per': '페르시아어', 'urd': '우르두어',
     'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
+    'ara': '아랍어', 'per': '페르시아어', 'urd': '우르두어',
+    'tha': '태국어', 'mya': '미얀마어', 'khm': '크메르어', 'lao': '라오어',
+    'vie': '베트남어', 'ind': '인도네시아어', 'msa': '말레이어',
     'und': '알 수 없음'
 }
 
-# 언어 판별: 특수문자/공백 제거 후 첫 글자 기준
-def detect_language(text: str) -> str:
+# 유니코드 기반 기본 언어 감지
+def detect_language_unicode(text: str) -> str:
     text = re.sub(r'[\s\W_]+', '', text)
     if not text:
         return 'und'
-
-    # 유니코드 범위 기반 언어 감지
-    has_hiragana = any('\u3040' <= c <= '\u309F' for c in text)
-    has_katakana = any('\u30A0' <= c <= '\u30FF' for c in text)
-    has_han = any('\u4E00' <= c <= '\u9FFF' for c in text)
-    has_arabic = any('\u0600' <= c <= '\u06FF' for c in text)
-
-    if has_hiragana or has_katakana:
-        return 'jpn'
-    elif has_han:
-        return 'chi'
-    elif has_arabic:
-        # 아랍어 단어 패턴으로 간이 구분
-        if any(word in text for word in ['الله', 'محمد', 'السلام']):
-            return 'ara'
-        elif any(word in text for word in ['فارسی', 'کتاب', 'دانشگاه']):
-            return 'per'  # 페르시아어
-        elif any(word in text for word in ['اردو', 'کتابیں', 'خبریں']):
-            return 'urd'  # 우르두어
-        else:
-            return 'ara'
-    elif '\u0400' <= text[0] <= '\u04FF':
-        return 'rus'
-    elif 'a' <= text[0].lower() <= 'z':
-        return 'eng'
-    elif '\uAC00' <= text[0] <= '\uD7A3':
+    first = text[0]
+    if '\u0E00' <= first <= '\u0E7F':
+        return 'tha'  # 태국어
+    elif '\u1000' <= first <= '\u109F':
+        return 'mya'  # 미얀마어
+    elif '\u1780' <= first <= '\u17FF':
+        return 'khm'  # 크메르어
+    elif '\u0E80' <= first <= '\u0EFF':
+        return 'lao'  # 라오어
+    elif '\u3040' <= first <= '\u30FF':
+        return 'jpn'  # 일본어
+    elif '\u4E00' <= first <= '\u9FFF':
+        return 'han'  # 한자권
+    elif '\uAC00' <= first <= '\uD7A3':
         return 'kor'
+    elif '\u0600' <= first <= '\u06FF':
+        return 'ara'
+    elif '\u0400' <= first <= '\u04FF':
+        return 'rus'
+    elif 'a' <= first.lower() <= 'z':
+        return 'latn'
     else:
         return 'und'
 
-# 041 태그 → 546 주기 생성
+# 라틴 문자의 경우 언어 보정
+def refine_latin_language(text: str) -> str:
+    if any(x in text for x in ['đ', 'ă', 'ơ', 'ư', 'â', 'ê', 'ấ', 'ộ', 'ồ']):
+        return 'vie'
+    elif any(x in text.lower() for x in ['yang', 'tidak', 'dengan']):
+        return 'ind'
+    elif any(x in text.lower() for x in ['saya', 'akan', 'ialah']):
+        return 'msa'
+    else:
+        return 'eng'
+
+# 두 텍스트 기반으로 본문언어/원어 추론
+def infer_languages(title: str, original_title: str) -> tuple:
+    lang_title = detect_language_unicode(title)
+    lang_orig = detect_language_unicode(original_title)
+
+    if lang_title == 'latn':
+        lang_title = refine_latin_language(title)
+    if lang_orig == 'latn':
+        lang_orig = refine_latin_language(original_title)
+
+    if lang_title == 'han':
+        if lang_orig in ['fre', 'eng', 'ger', 'ita', 'spa']:
+            lang_title = 'jpn'
+        else:
+            lang_title = 'chi'
+
+    if lang_orig == 'han':
+        if lang_title == 'jpn':
+            lang_orig = 'chi'
+        else:
+            lang_orig = ''
+
+    return lang_title, lang_orig
+
+# 041 → 546 변환
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes = []
     h_code = None
@@ -68,7 +100,7 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-# API 호출 및 041 + 546 생성
+# 알라딘 API 조회 및 태그 생성
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -86,7 +118,6 @@ def get_kormarc_041_tag(isbn):
 
     try:
         root = ET.fromstring(response.content)
-
         item = root.find("item")
         if item is None:
             return "📕 <item> 태그를 찾을 수 없습니다.", ""
@@ -99,11 +130,10 @@ def get_kormarc_041_tag(isbn):
             if ot is not None and ot.text:
                 original_title = ot.text
 
-        lang_a = detect_language(title)
-        lang_h = detect_language(original_title)
+        lang_a, lang_h = infer_languages(title, original_title)
 
-        marc_a = f"$a{lang_a}"
-        marc_h = f"$h{lang_h}" if original_title else ""
+        marc_a = f"$a{lang_a}" if lang_a else ""
+        marc_h = f"$h{lang_h}" if lang_h else ""
 
         marc_041 = f"041 {marc_a} {marc_h}".strip()
         marc_546 = generate_546_from_041_kormarc(marc_041)
@@ -115,8 +145,8 @@ def get_kormarc_041_tag(isbn):
     except Exception as e:
         return f"📕 예외 발생: {str(e)}", ""
 
-# Streamlit 앱 인터페이스
-st.title("📘 KORMARC 041 & 546 태그 생성기")
+# Streamlit UI
+st.title("📘 KORMARC 041 & 546 태그 생성기 (다국어 지원)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
