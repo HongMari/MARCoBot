@@ -3,29 +3,45 @@ import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
 
-# ISDS 언어코드 → 한국어 표현
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
-    'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
+    'ara': '아랍어', 'per': '페르시아어', 'urd': '우르두어',
+    'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
     'und': '알 수 없음'
 }
 
 # 언어 판별: 특수문자/공백 제거 후 첫 글자 기준
-def detect_language(text):
+def detect_language(text: str) -> str:
     text = re.sub(r'[\s\W_]+', '', text)
     if not text:
         return 'und'
-    first_char = text[0]
-    if '\uac00' <= first_char <= '\ud7a3':
-        return 'kor'
-    elif '\u3040' <= first_char <= '\u30ff':
+
+    # 유니코드 범위 기반 언어 감지
+    has_hiragana = any('\u3040' <= c <= '\u309F' for c in text)
+    has_katakana = any('\u30A0' <= c <= '\u30FF' for c in text)
+    has_han = any('\u4E00' <= c <= '\u9FFF' for c in text)
+    has_arabic = any('\u0600' <= c <= '\u06FF' for c in text)
+
+    if has_hiragana or has_katakana:
         return 'jpn'
-    elif '\u4e00' <= first_char <= '\u9fff':
+    elif has_han:
         return 'chi'
-    elif '\u0400' <= first_char <= '\u04FF':
+    elif has_arabic:
+        # 아랍어 단어 패턴으로 간이 구분
+        if any(word in text for word in ['الله', 'محمد', 'السلام']):
+            return 'ara'
+        elif any(word in text for word in ['فارسی', 'کتاب', 'دانشگاه']):
+            return 'per'  # 페르시아어
+        elif any(word in text for word in ['اردو', 'کتابیں', 'خبریں']):
+            return 'urd'  # 우르두어
+        else:
+            return 'ara'
+    elif '\u0400' <= text[0] <= '\u04FF':
         return 'rus'
-    elif 'a' <= first_char.lower() <= 'z':
+    elif 'a' <= text[0].lower() <= 'z':
         return 'eng'
+    elif '\uAC00' <= text[0] <= '\uD7A3':
+        return 'kor'
     else:
         return 'und'
 
