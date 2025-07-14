@@ -2,34 +2,30 @@ import re
 import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
+from langdetect import detect
 
-# ISDS 언어코드 → 한국어 표현
-ISDS_LANGUAGE_CODES = {
-    'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
-    'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
-    'und': '알 수 없음'
+# ISO 639-1 코드 → ISDS 코드 매핑
+ISO_TO_ISDS = {
+    'ko': 'kor', 'en': 'eng', 'ja': 'jpn', 'zh-cn': 'chi', 'zh-tw': 'chi',
+    'fr': 'fre', 'de': 'ger', 'ru': 'rus', 'ar': 'ara', 'it': 'ita', 'es': 'spa'
 }
 
-# 언어 판별: 특수문자/공백 제거 후 첫 글자 기준
+# ISDS → 한국어 이름 매핑
+ISDS_LANGUAGE_CODES = {
+    'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어',
+    'rus': '러시아어', 'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어',
+    'ita': '이탈리아어', 'spa': '스페인어', 'und': '알 수 없음'
+}
+
+# 언어 감지 및 ISDS 매핑
 def detect_language(text):
-    text = re.sub(r'[\s\W_]+', '', text)
-    if not text:
-        return 'und'
-    first_char = text[0]
-    if '\uac00' <= first_char <= '\ud7a3':
-        return 'kor'
-    elif '\u3040' <= first_char <= '\u30ff':
-        return 'jpn'
-    elif '\u4e00' <= first_char <= '\u9fff':
-        return 'chi'
-    elif '\u0400' <= first_char <= '\u04FF':
-        return 'rus'
-    elif 'a' <= first_char.lower() <= 'z':
-        return 'eng'
-    else:
+    try:
+        lang_code = detect(text)
+        return ISO_TO_ISDS.get(lang_code.lower(), 'und')
+    except:
         return 'und'
 
-# 041 태그 → 546 주기 생성
+# 041 필드 → 546 주기 변환
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes = []
     h_code = None
@@ -52,12 +48,12 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-# API 호출 및 041 + 546 생성
+# 알라딘 API에서 정보 가져오기
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
     params = {
-        "ttbkey": "ttbmary38642333002",
+        "ttbkey": "ttbmary38642333002",  # 사용자 제공 키
         "itemIdType": "ISBN13",
         "ItemId": isbn,
         "output": "xml",
@@ -71,27 +67,24 @@ def get_kormarc_041_tag(isbn):
     try:
         root = ET.fromstring(response.content)
 
-        # 네임스페이스 고정 (알라딘 전용)
-        ns = {"ns": "http://www.aladin.co.kr/ttb/apiguide.aspx"}
-
-        # ❗ 여기 핵심 수정: 정확하게 <item> 찾기
-        item = root.find("ns:item", namespaces=ns)
+        # 네임스페이스 없이 직접 접근
+        item = root.find(".//item")
         if item is None:
             return "📕 <item> 태그를 찾을 수 없습니다.", ""
 
-        title = item.findtext("ns:title", default="", namespaces=ns)
-        subinfo = item.find("ns:subInfo", namespaces=ns)
+        title = item.findtext("title", default="")
+        subinfo = item.find("subInfo")
         original_title = ""
         if subinfo is not None:
-            ot = subinfo.find("ns:originalTitle", namespaces=ns)
+            ot = subinfo.find("originalTitle")
             if ot is not None and ot.text:
                 original_title = ot.text
 
         lang_a = detect_language(title)
-        lang_h = detect_language(original_title)
+        lang_h = detect_language(original_title) if original_title else None
 
         marc_a = f"$a{lang_a}"
-        marc_h = f"$h{lang_h}" if original_title else ""
+        marc_h = f"$h{lang_h}" if lang_h else ""
 
         marc_041 = f"041 {marc_a} {marc_h}".strip()
         marc_546 = generate_546_from_041_kormarc(marc_041)
@@ -103,7 +96,7 @@ def get_kormarc_041_tag(isbn):
     except Exception as e:
         return f"📕 예외 발생: {str(e)}", ""
 
-# Streamlit 앱 인터페이스
+# Streamlit UI
 st.title("📘 KORMARC 041 & 546 태그 생성기")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
