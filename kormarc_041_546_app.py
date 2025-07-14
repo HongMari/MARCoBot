@@ -4,7 +4,6 @@ import requests
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
-# 언어 코드 → 한국어 표현
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
     'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
@@ -109,7 +108,6 @@ def get_kormarc_041_tag(isbn):
     title, original_title = "", ""
     lang_a, lang_h = "", ""
 
-    # 1️⃣ 알라딘 API 요청 (User-Agent 포함)
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -123,38 +121,33 @@ def get_kormarc_041_tag(isbn):
 
         response = requests.get(url, params=params, headers=headers)
         root = ET.fromstring(response.content)
-        ns = {"ns": "http://www.aladin.co.kr/ttb/apiguide.aspx"}
-        item = root.find("ns:item", namespaces=ns)
+        item = root.find("item")
 
         if item is None:
             raise Exception("item 없음")
 
-        title = item.findtext("ns:title", default="", namespaces=ns)
-        subinfo = item.find("ns:subInfo", namespaces=ns)
+        title = item.findtext("title", default="")
+        subinfo = item.find("subInfo")
         if subinfo is not None:
-            ot = subinfo.find("ns:originalTitle", namespaces=ns)
-            if ot is not None and ot.text:
-                original_title = ot.text
+            original_title = subinfo.findtext("originalTitle", default="")
 
         lang_a = detect_language(title)
         lang_h = detect_language(original_title) if original_title else ""
 
     except Exception:
-        # 2️⃣ fallback: 웹 크롤링
         subject, lang_hint = get_aladin_subject_and_language_hint(isbn)
         lang_a = lang_hint
         lang_h = infer_h_from_subject(subject)
 
     marc_a = f"$a{lang_a or 'und'}"
     marc_h = f"$h{lang_h}" if lang_h else ""
-
     marc_041 = f"041 {marc_a} {marc_h}".strip()
     marc_546 = generate_546_from_041_kormarc(marc_041)
 
     return marc_041, marc_546
 
 # Streamlit UI
-st.title("📘 KORMARC 041 & 546 태그 생성기 (API 우선 + 크롤링 보완)")
+st.title("📘 KORMARC 041 & 546 태그 생성기 (namespace 제거)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
