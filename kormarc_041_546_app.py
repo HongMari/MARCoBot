@@ -4,6 +4,7 @@ import requests
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
+# 언어코드 → 한국어 표현
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
     'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
@@ -39,11 +40,13 @@ def detect_language(text):
     else:
         return 'und'
 
+# 웹 크롤링용 세션
 def get_aladin_subject_and_language_hint(isbn13: str):
+    session = requests.Session()
     headers = {"User-Agent": "Mozilla/5.0"}
 
     search_url = f"https://www.aladin.co.kr/search/wsearchresult.aspx?SearchTarget=All&SearchWord={isbn13}"
-    search_res = requests.get(search_url, headers=headers)
+    search_res = session.get(search_url, headers=headers)
     if search_res.status_code != 200:
         return "", ""
 
@@ -53,7 +56,7 @@ def get_aladin_subject_and_language_hint(isbn13: str):
         return "", ""
 
     detail_url = "https://www.aladin.co.kr" + first_link["href"]
-    detail_res = requests.get(detail_url, headers=headers)
+    detail_res = session.get(detail_url, headers=headers)
     if detail_res.status_code != 200:
         return "", ""
 
@@ -103,12 +106,14 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
+# 전체 태그 생성
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
-    title, original_title = "", ""
-    lang_a, lang_h = "", ""
-
     headers = {"User-Agent": "Mozilla/5.0"}
+    title, original_title, lang_a, lang_h = "", "", "", ""
+
+    # ✅ API 요청용 분리 세션
+    session_api = requests.Session()
     try:
         url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
         params = {
@@ -118,8 +123,7 @@ def get_kormarc_041_tag(isbn):
             "output": "xml",
             "Version": "20131101"
         }
-
-        response = requests.get(url, params=params, headers=headers)
+        response = session_api.get(url, params=params, headers=headers)
         root = ET.fromstring(response.content)
         item = root.find("item")
 
@@ -135,6 +139,7 @@ def get_kormarc_041_tag(isbn):
         lang_h = detect_language(original_title) if original_title else ""
 
     except Exception:
+        # Fallback: 크롤링으로 추정
         subject, lang_hint = get_aladin_subject_and_language_hint(isbn)
         lang_a = lang_hint
         lang_h = infer_h_from_subject(subject)
@@ -146,8 +151,8 @@ def get_kormarc_041_tag(isbn):
 
     return marc_041, marc_546
 
-# Streamlit UI
-st.title("📘 KORMARC 041 & 546 태그 생성기 (namespace 제거)")
+# Streamlit 인터페이스
+st.title("📘 KORMARC 041 & 546 태그 생성기 (세션 분리 안정화)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
