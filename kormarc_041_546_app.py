@@ -4,20 +4,20 @@ import requests
 import xml.etree.ElementTree as ET
 from langdetect import detect
 
-# ISO 639-1 코드 → ISDS 코드 매핑
+# ISO 639-1 → ISDS 코드
 ISO_TO_ISDS = {
     'ko': 'kor', 'en': 'eng', 'ja': 'jpn', 'zh-cn': 'chi', 'zh-tw': 'chi',
     'fr': 'fre', 'de': 'ger', 'ru': 'rus', 'ar': 'ara', 'it': 'ita', 'es': 'spa'
 }
 
-# ISDS → 한국어 이름 매핑
+# ISDS 코드 → 한국어
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어',
     'rus': '러시아어', 'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어',
     'ita': '이탈리아어', 'spa': '스페인어', 'und': '알 수 없음'
 }
 
-# 언어 감지 및 ISDS 매핑
+# 언어 감지 및 매핑
 def detect_language(text):
     try:
         lang_code = detect(text)
@@ -25,7 +25,7 @@ def detect_language(text):
     except:
         return 'und'
 
-# 041 필드 → 546 주기 변환
+# 041 → 546 변환
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes = []
     h_code = None
@@ -48,12 +48,12 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-# 알라딘 API에서 정보 가져오기
+# 알라딘 API 호출
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
     params = {
-        "ttbkey": "ttbmary38642333002",  # 사용자 제공 키
+        "ttbkey": "ttbmary38642333002",  # 사용자 알라딘 API 키
         "itemIdType": "ISBN13",
         "ItemId": isbn,
         "output": "xml",
@@ -66,8 +66,6 @@ def get_kormarc_041_tag(isbn):
 
     try:
         root = ET.fromstring(response.content)
-
-        # 네임스페이스 없이 직접 접근
         item = root.find(".//item")
         if item is None:
             return "📕 <item> 태그를 찾을 수 없습니다.", ""
@@ -86,10 +84,12 @@ def get_kormarc_041_tag(isbn):
         marc_a = f"$a{lang_a}"
         marc_h = f"$h{lang_h}" if lang_h else ""
 
-        marc_041 = f"041 {marc_a} {marc_h}".strip()
-        marc_546 = generate_546_from_041_kormarc(marc_041)
+        # KORMARC 필드 양식 적용
+        marc_041_field = f"041 0#{marc_a}{marc_h}"
+        marc_546_text = generate_546_from_041_kormarc(f"{marc_a} {marc_h}".strip())
+        marc_546_field = f"546 ##$a{marc_546_text}"
 
-        return marc_041, marc_546
+        return marc_041_field, marc_546_field
 
     except ET.ParseError as e:
         return f"📕 XML 파싱 오류: {str(e)}", ""
@@ -103,8 +103,8 @@ isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
     if isbn_input:
         tag_041, tag_546 = get_kormarc_041_tag(isbn_input)
-        st.text(f"📄 생성된 041 태그: {tag_041}")
+        st.code(tag_041, language="text")
         if tag_546:
-            st.text(f"📄 생성된 546 태그: {tag_546}")
+            st.code(tag_546, language="text")
     else:
         st.warning("ISBN을 입력해주세요.")
