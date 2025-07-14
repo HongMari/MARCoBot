@@ -3,7 +3,7 @@ import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
 
-# 언어코드 → 한국어 표현
+# ISDS 코드 → 한국어 표현
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
     'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
@@ -13,71 +13,35 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
-# 유니코드 기반 기본 언어 감지
-def detect_language_unicode(text: str) -> str:
-    text = re.sub(r'[\s\W_]+', '', text)
-    if not text:
-        return 'und'
-    first = text[0]
-    if '\u0E00' <= first <= '\u0E7F':
-        return 'tha'  # 태국어
-    elif '\u1000' <= first <= '\u109F':
-        return 'mya'  # 미얀마어
-    elif '\u1780' <= first <= '\u17FF':
-        return 'khm'  # 크메르어
-    elif '\u0E80' <= first <= '\u0EFF':
-        return 'lao'  # 라오어
-    elif '\u3040' <= first <= '\u30FF':
-        return 'jpn'  # 일본어
-    elif '\u4E00' <= first <= '\u9FFF':
-        return 'han'  # 한자권
-    elif '\uAC00' <= first <= '\uD7A3':
-        return 'kor'
-    elif '\u0600' <= first <= '\u06FF':
-        return 'ara'
-    elif '\u0400' <= first <= '\u04FF':
-        return 'rus'
-    elif 'a' <= first.lower() <= 'z':
-        return 'latn'
-    else:
+# ✅ 외부 언어 감지 API 사용 (LibreTranslate)
+def detect_language_external(text: str) -> str:
+    try:
+        url = "https://libretranslate.de/detect"
+        response = requests.post(url, json={"q": text}, timeout=5)
+        response.raise_for_status()
+        result = response.json()
+        if not result:
+            return 'und'
+
+        lang_code = result[0]['language']
+        return {
+            'ko': 'kor', 'en': 'eng', 'ja': 'jpn', 'zh': 'chi',
+            'fr': 'fre', 'de': 'ger', 'it': 'ita', 'es': 'spa',
+            'ar': 'ara', 'fa': 'per', 'ur': 'urd', 'vi': 'vie',
+            'th': 'tha', 'id': 'ind', 'ms': 'msa', 'my': 'mya',
+            'km': 'khm', 'lo': 'lao', 'ru': 'rus'
+        }.get(lang_code, 'und')
+    except Exception as e:
+        print(f"🌐 언어 감지 API 오류: {e}")
         return 'und'
 
-# 라틴 문자의 경우 언어 보정
-def refine_latin_language(text: str) -> str:
-    if any(x in text for x in ['đ', 'ă', 'ơ', 'ư', 'â', 'ê', 'ấ', 'ộ', 'ồ']):
-        return 'vie'
-    elif any(x in text.lower() for x in ['yang', 'tidak', 'dengan']):
-        return 'ind'
-    elif any(x in text.lower() for x in ['saya', 'akan', 'ialah']):
-        return 'msa'
-    else:
-        return 'eng'
-
-# 두 텍스트 기반으로 본문언어/원어 추론
+# ✅ 제목 / 원제 기반으로 $a / $h 언어코드 추출
 def infer_languages(title: str, original_title: str) -> tuple:
-    lang_title = detect_language_unicode(title)
-    lang_orig = detect_language_unicode(original_title)
+    lang_a = detect_language_external(title)
+    lang_h = detect_language_external(original_title) if original_title else ''
+    return lang_a, lang_h
 
-    if lang_title == 'latn':
-        lang_title = refine_latin_language(title)
-    if lang_orig == 'latn':
-        lang_orig = refine_latin_language(original_title)
-
-    if lang_title == 'han':
-        if lang_orig in ['fre', 'eng', 'ger', 'ita', 'spa']:
-            lang_title = 'jpn'
-        else:
-            lang_title = 'chi'
-
-    if lang_orig == 'han':
-        if lang_title == 'jpn':
-            lang_orig = 'chi'
-        else:
-            lang_orig = ''
-
-    return lang_title, lang_orig
-
-# 041 → 546 변환
+# ✅ 041 → 546 주기 생성
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes = []
     h_code = None
@@ -100,7 +64,7 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-# 알라딘 API 조회 및 태그 생성
+# ✅ 알라딘 API 호출 및 041/546 생성
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -145,8 +109,8 @@ def get_kormarc_041_tag(isbn):
     except Exception as e:
         return f"📕 예외 발생: {str(e)}", ""
 
-# Streamlit UI
-st.title("📘 KORMARC 041 & 546 태그 생성기 (다국어 지원)")
+# ✅ Streamlit 앱 UI
+st.title("📘 KORMARC 041 & 546 태그 생성기 (외부 언어 감지 API 연동)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
