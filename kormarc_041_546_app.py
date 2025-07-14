@@ -106,43 +106,44 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
 
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
-    url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
-    params = {
-        "ttbkey": "ttbmary38642333002",
-        "itemIdType": "ISBN13",
-        "ItemId": isbn,
-        "output": "xml",
-        "Version": "20131101"
-    }
+    title, original_title = "", ""
+    lang_a, lang_h = "", ""
 
-    title = ""
-    original_title = ""
-
+    # 1️⃣ 알라딘 API 요청 (User-Agent 포함)
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        response = requests.get(url, params=params)
-        if response.status_code != 200:
-            raise Exception("API 호출 실패")
+        url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
+        params = {
+            "ttbkey": "ttbmary38642333002",
+            "itemIdType": "ISBN13",
+            "ItemId": isbn,
+            "output": "xml",
+            "Version": "20131101"
+        }
 
+        response = requests.get(url, params=params, headers=headers)
         root = ET.fromstring(response.content)
         ns = {"ns": "http://www.aladin.co.kr/ttb/apiguide.aspx"}
         item = root.find("ns:item", namespaces=ns)
-        if item is not None:
-            title = item.findtext("ns:title", default="", namespaces=ns)
-            subinfo = item.find("ns:subInfo", namespaces=ns)
-            if subinfo is not None:
-                ot = subinfo.find("ns:originalTitle", namespaces=ns)
-                if ot is not None and ot.text:
-                    original_title = ot.text
+
+        if item is None:
+            raise Exception("item 없음")
+
+        title = item.findtext("ns:title", default="", namespaces=ns)
+        subinfo = item.find("ns:subInfo", namespaces=ns)
+        if subinfo is not None:
+            ot = subinfo.find("ns:originalTitle", namespaces=ns)
+            if ot is not None and ot.text:
+                original_title = ot.text
+
+        lang_a = detect_language(title)
+        lang_h = detect_language(original_title) if original_title else ""
 
     except Exception:
-        # API 실패 시 그냥 넘어감
-        pass
-
-    # Fallback: 웹 기반 언어/주제 보완
-    subject, lang_hint = get_aladin_subject_and_language_hint(isbn)
-
-    lang_a = detect_language(title) if title else lang_hint
-    lang_h = detect_language(original_title) if original_title else infer_h_from_subject(subject)
+        # 2️⃣ fallback: 웹 크롤링
+        subject, lang_hint = get_aladin_subject_and_language_hint(isbn)
+        lang_a = lang_hint
+        lang_h = infer_h_from_subject(subject)
 
     marc_a = f"$a{lang_a or 'und'}"
     marc_h = f"$h{lang_h}" if lang_h else ""
@@ -152,8 +153,8 @@ def get_kormarc_041_tag(isbn):
 
     return marc_041, marc_546
 
-# Streamlit 인터페이스
-st.title("📘 KORMARC 041 & 546 태그 생성기 (API 우선 + 웹 Fallback)")
+# Streamlit UI
+st.title("📘 KORMARC 041 & 546 태그 생성기 (API 우선 + 크롤링 보완)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
