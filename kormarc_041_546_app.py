@@ -1,9 +1,39 @@
-import re
 import streamlit as st
 import requests
+import re
 import xml.etree.ElementTree as ET
+import fasttext
+import fasttext.util
+import os
 
-# ISDS 코드 → 한국어 표현
+# 1) 모델 다운로드 (최초 1회 실행)
+MODEL_PATH = "lid.176.ftz"
+if not os.path.exists(MODEL_PATH):
+    with st.spinner("🔽 fastText 언어 모델 다운로드 중..."):
+        fasttext.util.download_model('lid.176', if_exists='ignore')
+
+# 2) 모델 로딩 (캐싱으로 재사용)
+@st.cache_resource
+def load_fasttext_model():
+    return fasttext.load_model(MODEL_PATH)
+
+model = load_fasttext_model()
+
+# 3) fastText 기반 언어 감지
+def detect_language_fasttext(text: str) -> str:
+    if not text.strip():
+        return 'und'
+    prediction = model.predict(text.strip().replace("\n", " "))[0][0]
+    lang_code = prediction.replace('__label__', '')
+    return {
+        'ko': 'kor', 'en': 'eng', 'ja': 'jpn', 'zh': 'chi',
+        'fr': 'fre', 'de': 'ger', 'it': 'ita', 'es': 'spa',
+        'ar': 'ara', 'fa': 'per', 'ur': 'urd', 'vi': 'vie',
+        'th': 'tha', 'id': 'ind', 'ms': 'msa', 'my': 'mya',
+        'km': 'khm', 'lo': 'lao', 'ru': 'rus'
+    }.get(lang_code, 'und')
+
+# 4) 041 → 546 주기
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
     'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
@@ -13,35 +43,6 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
-# ✅ 외부 언어 감지 API 사용 (LibreTranslate)
-def detect_language_external(text: str) -> str:
-    try:
-        url = "https://libretranslate.de/detect"
-        response = requests.post(url, json={"q": text}, timeout=5)
-        response.raise_for_status()
-        result = response.json()
-        if not result:
-            return 'und'
-
-        lang_code = result[0]['language']
-        return {
-            'ko': 'kor', 'en': 'eng', 'ja': 'jpn', 'zh': 'chi',
-            'fr': 'fre', 'de': 'ger', 'it': 'ita', 'es': 'spa',
-            'ar': 'ara', 'fa': 'per', 'ur': 'urd', 'vi': 'vie',
-            'th': 'tha', 'id': 'ind', 'ms': 'msa', 'my': 'mya',
-            'km': 'khm', 'lo': 'lao', 'ru': 'rus'
-        }.get(lang_code, 'und')
-    except Exception as e:
-        print(f"🌐 언어 감지 API 오류: {e}")
-        return 'und'
-
-# ✅ 제목 / 원제 기반으로 $a / $h 언어코드 추출
-def infer_languages(title: str, original_title: str) -> tuple:
-    lang_a = detect_language_external(title)
-    lang_h = detect_language_external(original_title) if original_title else ''
-    return lang_a, lang_h
-
-# ✅ 041 → 546 주기 생성
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes = []
     h_code = None
@@ -64,7 +65,7 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-# ✅ 알라딘 API 호출 및 041/546 생성
+# 5) 알라딘 API 호출 및 태그 생성
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -94,7 +95,8 @@ def get_kormarc_041_tag(isbn):
             if ot is not None and ot.text:
                 original_title = ot.text
 
-        lang_a, lang_h = infer_languages(title, original_title)
+        lang_a = detect_language_fasttext(title)
+        lang_h = detect_language_fasttext(original_title) if original_title else ""
 
         marc_a = f"$a{lang_a}" if lang_a else ""
         marc_h = f"$h{lang_h}" if lang_h else ""
@@ -109,8 +111,8 @@ def get_kormarc_041_tag(isbn):
     except Exception as e:
         return f"📕 예외 발생: {str(e)}", ""
 
-# ✅ Streamlit 앱 UI
-st.title("📘 KORMARC 041 & 546 태그 생성기 (외부 언어 감지 API 연동)")
+# 6) Streamlit UI
+st.title("📘 KORMARC 041 & 546 태그 생성기 (fastText 기반 정확한 언어 감지)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
