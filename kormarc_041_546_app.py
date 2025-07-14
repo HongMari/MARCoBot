@@ -11,7 +11,6 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
-# 주제 키워드 → 언어 코드
 SUBJECT_TO_LANG = {
     "일본": "jpn", "프랑스": "fre", "영미": "eng", "영국": "eng",
     "독일": "ger", "중국": "chi", "러시아": "rus", "한국": "kor"
@@ -23,7 +22,6 @@ def infer_h_from_subject(subject: str) -> str:
             return lang_code
     return ""
 
-# 유니코드 기반 fallback 감지기
 def detect_language(text):
     text = re.sub(r'[\s\W_]+', '', text)
     if not text:
@@ -42,11 +40,9 @@ def detect_language(text):
     else:
         return 'und'
 
-# 웹 크롤링 (보조 수단)
 def get_aladin_subject_and_language_hint(isbn13: str):
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    # 검색 페이지
     search_url = f"https://www.aladin.co.kr/search/wsearchresult.aspx?SearchTarget=All&SearchWord={isbn13}"
     search_res = requests.get(search_url, headers=headers)
     if search_res.status_code != 200:
@@ -65,13 +61,11 @@ def get_aladin_subject_and_language_hint(isbn13: str):
     soup = BeautifulSoup(detail_res.text, "html.parser")
     page_text = soup.get_text(separator=" ", strip=True)
 
-    # 주제분류
     subject = ""
     cat = soup.select_one("#divCategory")
     if cat:
         subject = cat.get_text(" ", strip=True)
 
-    # 언어 힌트
     language_hint = ""
     lang_patterns = {
         "언어 : Japanese": "jpn", "Language : Japanese": "jpn",
@@ -88,7 +82,6 @@ def get_aladin_subject_and_language_hint(isbn13: str):
 
     return subject, language_hint
 
-# 546 주기 생성
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes = []
     h_code = None
@@ -111,7 +104,6 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-# 전체 생성 프로세스
 def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -123,20 +115,17 @@ def get_kormarc_041_tag(isbn):
         "Version": "20131101"
     }
 
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        return "❌ API 호출 실패", ""
+    title = ""
+    original_title = ""
 
     try:
+        response = requests.get(url, params=params)
+        if response.status_code != 200:
+            raise Exception("API 호출 실패")
+
         root = ET.fromstring(response.content)
         ns = {"ns": "http://www.aladin.co.kr/ttb/apiguide.aspx"}
         item = root.find("ns:item", namespaces=ns)
-
-        # 초기값 설정
-        title = ""
-        original_title = ""
-
-        # ✅ 1단계: 알라딘 API 우선 사용 (네임스페이스 적용)
         if item is not None:
             title = item.findtext("ns:title", default="", namespaces=ns)
             subinfo = item.find("ns:subInfo", namespaces=ns)
@@ -145,32 +134,26 @@ def get_kormarc_041_tag(isbn):
                 if ot is not None and ot.text:
                     original_title = ot.text
 
-        # ✅ 2단계: 부족한 부분만 웹 크롤링으로 보완
-        subject, lang_hint = get_aladin_subject_and_language_hint(isbn)
+    except Exception:
+        # API 실패 시 그냥 넘어감
+        pass
 
-        lang_a = detect_language(title)
-        if not title and lang_hint:
-            lang_a = lang_hint
+    # Fallback: 웹 기반 언어/주제 보완
+    subject, lang_hint = get_aladin_subject_and_language_hint(isbn)
 
-        lang_h = detect_language(original_title)
-        if not original_title:
-            lang_h = infer_h_from_subject(subject)
+    lang_a = detect_language(title) if title else lang_hint
+    lang_h = detect_language(original_title) if original_title else infer_h_from_subject(subject)
 
-        marc_a = f"$a{lang_a}"
-        marc_h = f"$h{lang_h}" if lang_h else ""
+    marc_a = f"$a{lang_a or 'und'}"
+    marc_h = f"$h{lang_h}" if lang_h else ""
 
-        marc_041 = f"041 {marc_a} {marc_h}".strip()
-        marc_546 = generate_546_from_041_kormarc(marc_041)
+    marc_041 = f"041 {marc_a} {marc_h}".strip()
+    marc_546 = generate_546_from_041_kormarc(marc_041)
 
-        return marc_041, marc_546
-
-    except ET.ParseError as e:
-        return f"📕 XML 파싱 오류: {str(e)}", ""
-    except Exception as e:
-        return f"📕 예외 발생: {str(e)}", ""
+    return marc_041, marc_546
 
 # Streamlit 인터페이스
-st.title("📘 KORMARC 041 & 546 태그 생성기 (알라딘 API 우선 + 웹 크롤링 보완)")
+st.title("📘 KORMARC 041 & 546 태그 생성기 (API 우선 + 웹 Fallback)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
