@@ -57,7 +57,7 @@ def get_kormarc_041_tag(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
     params = {
-        "ttbkey": "ttbmary38642333002",  # 사용자의 알라딘 API 키
+        "ttbkey": "ttbmary38642333002",  # 본인의 알라딘 API 키
         "itemIdType": "ISBN13",
         "ItemId": isbn,
         "output": "xml",
@@ -71,14 +71,14 @@ def get_kormarc_041_tag(isbn):
     try:
         root = ET.fromstring(response.content)
 
-        # 네임스페이스 제거
-        item = root.find("item")
+        # 모든 하위 노드에서 <item> 태그 찾기
+        item = root.find(".//item")
         if item is None:
             return "📕 <item> 태그를 찾을 수 없습니다.", ""
 
         title = item.findtext("title", default="")
-        subinfo = item.find("subInfo")
         original_title = ""
+        subinfo = item.find("subInfo")
         if subinfo is not None:
             ot = subinfo.find("originalTitle")
             if ot is not None and ot.text:
