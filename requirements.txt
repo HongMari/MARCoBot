@@ -1,3 +1,4 @@
-streamlit
-requests
+playwright
 beautifulsoup4
+requests
+streamlit
