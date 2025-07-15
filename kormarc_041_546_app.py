@@ -1,74 +1,109 @@
+import re
+import streamlit as st
 import requests
-from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 
-def detect_language_from_text(text):
-    text = text.lower()
-    if any(word in text for word in ["english", "영어"]):
-        return "eng"
-    elif any(word in text for word in ["korean", "한국어", "한글"]):
-        return "kor"
-    elif any(word in text for word in ["japanese", "일본어"]):
-        return "jpn"
-    elif any(word in text for word in ["chinese", "중국어"]):
-        return "chi"
-    elif any(word in text for word in ["french", "프랑스어"]):
-        return "fre"
-    elif any(word in text for word in ["german", "독일어"]):
-        return "ger"
+ISDS_LANGUAGE_CODES = {
+    'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
+    'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
+    'und': '알 수 없음'
+}
+
+def detect_language(text):
+    text = re.sub(r'[\s\W_]+', '', text)
+    if not text:
+        return 'und'
+    first_char = text[0]
+    if '\uac00' <= first_char <= '\ud7a3':
+        return 'kor'
+    elif '\u3040' <= first_char <= '\u30ff':
+        return 'jpn'
+    elif '\u4e00' <= first_char <= '\u9fff':
+        return 'chi'
+    elif '\u0400' <= first_char <= '\u04FF':
+        return 'rus'
+    elif 'a' <= first_char.lower() <= 'z':
+        return 'eng'
     else:
-        return None
+        return 'und'
 
-def get_041_546_by_aladin_api_and_crawl(isbn13: str, ttbkey: str = "ttbmary38642333002"):
-    # 1. 알라딘 API 호출
-    api_url = (
-        f"http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx?"
-        f"ttbkey={ttbkey}&itemIdType=ISBN13&ItemId={isbn13}"
-        f"&output=xml&Version=20131101&OptResult=ebookList,reviewList"
-    )
-    response = requests.get(api_url)
+def generate_546_from_041_kormarc(marc_041: str) -> str:
+    a_codes = []
+    h_code = None
+    for part in marc_041.split():
+        if part.startswith("$a"):
+            a_codes.append(part[2:])
+        elif part.startswith("$h"):
+            h_code = part[2:]
+
+    if len(a_codes) == 1:
+        a_lang = ISDS_LANGUAGE_CODES.get(a_codes[0], "알 수 없음")
+        if h_code:
+            h_lang = ISDS_LANGUAGE_CODES.get(h_code, "알 수 없음")
+            return f"{a_lang}로 씀, 원저는 {h_lang}임"
+        else:
+            return f"{a_lang}로 씀"
+    elif len(a_codes) > 1:
+        langs = [ISDS_LANGUAGE_CODES.get(code, "알 수 없음") for code in a_codes]
+        return f"{'、'.join(langs)} 병기"
+    else:
+        return "언어 정보 없음"
+
+def get_kormarc_041_tag(isbn):
+    isbn = isbn.strip().replace("-", "")
+    url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
+    params = {
+        "ttbkey": "ttbmary38642333002",
+        "itemIdType": "ISBN13",
+        "ItemId": isbn,
+        "output": "xml",
+        "Version": "20131101"
+    }
+
+    response = requests.get(url, params=params)
     if response.status_code != 200:
-        raise Exception(f"알라딘 API 호출 실패: status {response.status_code}")
+        return "❌ API 호출 실패", ""
 
-    root = ET.fromstring(response.text)
-    item = root.find("item")
-    if item is None:
-        raise ValueError("API 응답에 <item>이 존재하지 않습니다.\n" + response.text)
+    try:
+        root = ET.fromstring(response.content)
+        ns = {"ns": "http://www.aladin.co.kr/ttb/apiguide.aspx"}
+        item = root.find(".//ns:item", namespaces=ns)  # ← 핵심 수정
 
-    title = item.findtext("title", "")
-    item_id = item.findtext("itemId")
-    sub_info = item.find("subInfo")
-    original_title = sub_info.findtext("originalTitle", "") if sub_info is not None else ""
+        if item is None:
+            return "📕 <item> 태그를 찾을 수 없습니다.", ""
 
-    def lang_detect(text_source, fallback_lang):
-        lang = detect_language_from_text(text_source)
-        if lang:
-            return lang
+        title = item.findtext("ns:title", default="", namespaces=ns)
+        subinfo = item.find("ns:subInfo", namespaces=ns)
+        original_title = ""
+        if subinfo is not None:
+            ot = subinfo.find("ns:originalTitle", namespaces=ns)
+            if ot is not None and ot.text:
+                original_title = ot.text
 
-        # 웹 크롤링은 언어 감지 실패 시에만 실행
-        try:
-            if not item_id:
-                return fallback_lang
-            html = requests.get(f"https://www.aladin.co.kr/shop/wproduct.aspx?ItemId={item_id}").text
-            soup = BeautifulSoup(html, "html.parser")
-            detail_elem = soup.select_one("#Ere_prod_mconts_box")
-            if detail_elem:
-                detail = detail_elem.get_text()
-                lang = detect_language_from_text(detail)
-                if lang:
-                    return lang
-        except Exception as e:
-            print(f"[크롤링 오류] {e}")
-        return fallback_lang
+        lang_a = detect_language(title)
+        lang_h = detect_language(original_title)
 
-    lang_a = lang_detect(title, "und")
-    lang_h = lang_detect(original_title, "und") if original_title else None
+        marc_a = f"$a{lang_a}"
+        marc_h = f"$h{lang_h}" if original_title else ""
 
-    field_041 = f"041 0#$a{lang_a}" + (f"$h{lang_h}" if lang_h else "")
-    desc = f"본문 언어는 {lang_a}"
-    if lang_h:
-        desc += f", 원작은 {lang_h}"
-    desc += "."
-    field_546 = f"546 ##$a{desc}"
+        marc_041 = f"041 {marc_a} {marc_h}".strip()
+        marc_546 = generate_546_from_041_kormarc(marc_041)
 
-    return field_041, field_546
+        return marc_041, marc_546
+
+    except ET.ParseError as e:
+        return f"📕 XML 파싱 오류: {str(e)}", ""
+    except Exception as e:
+        return f"📕 예외 발생: {str(e)}", ""
+
+st.title("📘 KORMARC 041 & 546 태그 생성기")
+
+isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
+if st.button("태그 생성"):
+    if isbn_input:
+        tag_041, tag_546 = get_kormarc_041_tag(isbn_input)
+        st.text(f"📄 생성된 041 태그: {tag_041}")
+        if tag_546:
+            st.text(f"📄 생성된 546 태그: {tag_546}")
+    else:
+        st.warning("ISBN을 입력해주세요.")
