@@ -49,19 +49,23 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-def crawl_aladin_price(isbn13):
+def crawl_aladin_page(isbn13):
     url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn13}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        price_tag = soup.select_one("span.price2")
-        if price_tag:
-            price = price_tag.text.strip().replace("정가 : ", "").replace("원", "").replace(",", "")
-            return price
-    except:
-        pass
-    return ""
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return None
+        soup = BeautifulSoup(res.text, "html.parser")
+        original = soup.select_one("div.info_original")
+        price = soup.select_one("span.price2")
+        return {
+            "original_title": original.text.strip() if original else "",
+            "price": price.text.strip().replace("정가 : ", "").replace("원", "").replace(",", "").strip() if price else ""
+        }
+    except Exception as e:
+        print("크롤링 오류:", e)
+        return None
 
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
@@ -92,15 +96,20 @@ def get_kormarc_tags(isbn):
             if ot is not None and ot.text:
                 original_title = ot.text.strip()
 
+        # 부족하면 웹에서 보완
+        crawl_result = crawl_aladin_page(isbn)
+        if crawl_result:
+            if not original_title:
+                original_title = crawl_result.get("original_title", "")
+            price = crawl_result.get("price", "")
+        else:
+            price = ""
+
         lang_a = detect_language(title)
         lang_h = detect_language(original_title)
-        marc_a = f"$a{lang_a}"
-        marc_h = f"$h{lang_h}" if original_title else ""
-        marc_041 = f"041 {marc_a} {marc_h}".strip()
-        marc_546 = generate_546_from_041_kormarc(marc_041)
 
-        # 가격 보완 (웹 크롤링)
-        price = crawl_aladin_price(isbn)
+        marc_041 = f"041 $a{lang_a}" + (f" $h{lang_h}" if original_title else "")
+        marc_546 = generate_546_from_041_kormarc(marc_041)
         marc_020 = f"020 :$c{price}" if price else ""
 
         return marc_041, marc_546, marc_020, original_title
@@ -109,7 +118,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {str(e)}", "", "", ""
 
 # Streamlit 인터페이스
-st.title("📘 KORMARC 041 & 546 + 020 태그 생성기 (API + 웹 보완)")
+st.title("📘 KORMARC 041 & 546 + 020 태그 생성기 (Cloud 지원)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
