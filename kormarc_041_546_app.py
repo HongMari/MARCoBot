@@ -1,10 +1,9 @@
 import re
+import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
-from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-# ISDS 언어코드 → 한국어 표현
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
     'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
@@ -37,7 +36,6 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
             a_codes.append(part[2:])
         elif part.startswith("$h"):
             h_code = part[2:]
-
     if len(a_codes) == 1:
         a_lang = ISDS_LANGUAGE_CODES.get(a_codes[0], "알 수 없음")
         if h_code:
@@ -51,31 +49,19 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
     else:
         return "언어 정보 없음"
 
-def crawl_aladin_details(itemid_or_isbn13):
-    url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ItemId={itemid_or_isbn13}"
+def crawl_aladin_price(isbn13):
+    url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn13}"
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=10000)
-            content = page.content()
-            browser.close()
-        soup = BeautifulSoup(content, 'html.parser')
-
-        original_tag = soup.select_one("div.info_original")
-        original_title = original_tag.text.strip() if original_tag else None
-
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
         price_tag = soup.select_one("span.price2")
-        price_text = price_tag.text.strip() if price_tag else ""
-        price_text = price_text.replace("정가 : ", "").replace("원", "").replace(",", "").strip()
-
-        return {
-            "original_title": original_title,
-            "price": price_text
-        }
-    except Exception as e:
-        print("크롤링 실패:", e)
-        return None
+        if price_tag:
+            price = price_tag.text.strip().replace("정가 : ", "").replace("원", "").replace(",", "")
+            return price
+    except:
+        pass
+    return ""
 
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
@@ -99,27 +85,22 @@ def get_kormarc_tags(isbn):
             raise ValueError("📕 <item> 태그 없음")
 
         title = item.findtext("title", default="")
-        subinfo = item.find("subInfo")
         original_title = ""
+        subinfo = item.find("subInfo")
         if subinfo is not None:
             ot = subinfo.find("originalTitle")
             if ot is not None and ot.text:
                 original_title = ot.text.strip()
 
-        # 크롤링으로 보완
-        crawl_result = crawl_aladin_details(isbn)
-        if crawl_result:
-            if not original_title and crawl_result.get("original_title"):
-                original_title = crawl_result["original_title"]
-            price = crawl_result.get("price", "")
-        else:
-            price = ""
-
         lang_a = detect_language(title)
         lang_h = detect_language(original_title)
-
-        marc_041 = f"041 $a{lang_a}" + (f" $h{lang_h}" if original_title else "")
+        marc_a = f"$a{lang_a}"
+        marc_h = f"$h{lang_h}" if original_title else ""
+        marc_041 = f"041 {marc_a} {marc_h}".strip()
         marc_546 = generate_546_from_041_kormarc(marc_041)
+
+        # 가격 보완 (웹 크롤링)
+        price = crawl_aladin_price(isbn)
         marc_020 = f"020 :$c{price}" if price else ""
 
         return marc_041, marc_546, marc_020, original_title
@@ -127,15 +108,19 @@ def get_kormarc_tags(isbn):
     except Exception as e:
         return f"📕 예외 발생: {str(e)}", "", "", ""
 
-# 실행용
-if __name__ == "__main__":
-    isbn_input = input("ISBN13을 입력하세요: ").strip()
-    tag_041, tag_546, tag_020, original_title = get_kormarc_tags(isbn_input)
+# Streamlit 인터페이스
+st.title("📘 KORMARC 041 & 546 + 020 태그 생성기 (API + 웹 보완)")
 
-    print("\n📄 생성된 MARC 태그")
-    print("041:", tag_041)
-    print("546:", tag_546)
-    if tag_020:
-        print("020:", tag_020)
-    if original_title:
-        print("원제:", original_title)
+isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
+if st.button("태그 생성"):
+    if isbn_input:
+        tag_041, tag_546, tag_020, ot = get_kormarc_tags(isbn_input)
+        st.text(f"📄 041 태그: {tag_041}")
+        if tag_546:
+            st.text(f"📄 546 태그: {tag_546}")
+        if tag_020:
+            st.text(f"📄 020 태그: {tag_020}")
+        if ot:
+            st.text(f"📕 원제: {ot}")
+    else:
+        st.warning("ISBN을 입력해주세요.")
