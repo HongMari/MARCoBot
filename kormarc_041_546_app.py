@@ -4,14 +4,13 @@ import requests
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
-# 언어 코드 → 한글
+# 언어 코드 → 한국어 표현
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어', 'rus': '러시아어',
     'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어', 'ita': '이탈리아어', 'spa': '스페인어',
     'und': '알 수 없음'
 }
 
-# 언어 판별
 def detect_language(text):
     text = re.sub(r'[\s\W_]+', '', text)
     if not text:
@@ -30,7 +29,6 @@ def detect_language(text):
     else:
         return 'und'
 
-# 041 → 546
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes, h_code = [], None
     for part in marc_041.split():
@@ -50,7 +48,11 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
         return f"{'、'.join(langs)} 병기"
     return "언어 정보 없음"
 
-# 정적 웹에서 원제 + 정가 보완
+# 네임스페이스 제거 함수
+def strip_ns(tag):
+    return tag.split('}')[-1] if '}' in tag else tag
+
+# 웹에서 원제와 가격 보완
 def crawl_aladin_fallback(isbn13):
     url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn13}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -66,7 +68,7 @@ def crawl_aladin_fallback(isbn13):
     except:
         return {}
 
-# 전체 태그 생성 함수
+# 041/546/020 생성
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -84,7 +86,12 @@ def get_kormarc_tags(isbn):
             raise ValueError("API 호출 실패")
 
         root = ET.fromstring(response.content)
-        item = root.find(".//item")
+
+        # 네임스페이스 제거: {http://...}item → item
+        for elem in root.iter():
+            elem.tag = strip_ns(elem.tag)
+
+        item = root.find("item")
         if item is None:
             raise ValueError("<item> 태그 없음")
 
@@ -92,7 +99,7 @@ def get_kormarc_tags(isbn):
         subinfo = item.find("subInfo")
         original_title = subinfo.findtext("originalTitle") if subinfo is not None else ""
 
-        # 웹에서 보완
+        # 부족한 경우 웹 크롤링 보완
         crawl = crawl_aladin_fallback(isbn)
         if not original_title:
             original_title = crawl.get("original_title", "")
@@ -110,7 +117,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {e}", "", "", ""
 
 # Streamlit UI
-st.title("📘 KORMARC 041 & 546 + 020 태그 생성기 (최종 버전)")
+st.title("📘 KORMARC 041 & 546 + 020 태그 생성기 (네임스페이스 대응 완전판)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
