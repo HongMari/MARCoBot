@@ -113,11 +113,12 @@ def crawl_aladin_fallback(isbn13):
         category_text = ""
         categories = soup.select("div.conts_info_list2 li")
         for cat in categories:
-            category_text += cat.get_text(separator=" ", strip=True) + " "
-        
-        # ✅ 디버그: 실제 크롤링된 텍스트 확인
-        print("📘 [DEBUG] category_text =", category_text)
+        category_text += cat.get_text(separator=" ", strip=True) + " "
 
+        # 디버그: 로그 및 화면 출력
+        print("📘 [DEBUG] category_text =", category_text)
+        st.write("📘 [DEBUG] category_text =", category_text)      
+       
         category_lang = detect_language_from_category(category_text)
         print("📘 [DEBUG] category_lang =", category_lang)
 
@@ -204,4 +205,5 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
+
 
