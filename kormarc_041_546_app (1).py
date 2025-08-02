@@ -176,7 +176,7 @@ def get_kormarc_tags(isbn):
         lang_h = subject_lang or detect_language(original_title)
 
         # ✅ 원제가 없어도 lang_h만으로 $h 생성
-        tag_041 = f"041 $a{lang_a}" + (f" $h{lang_h}" if lang_h and lang_h != lang_a else "")
+        tag_041 = f"041 $a{lang_a}" + ( f" $h{lang_h}" if lang_h and lang_h != lang_a and lang_h != "und" else "")
         tag_546 = generate_546_from_041_kormarc(tag_041)
         tag_020 = f"020 :$c{price}" if price else ""
 
@@ -204,3 +204,4 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
+
