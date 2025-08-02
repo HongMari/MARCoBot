@@ -182,4 +182,16 @@ st.title("📘 KORMARC 041/546/020 태그 생성기 (카테고리 기반 언어 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
     if isbn_input:
-        tag_041, tag_546, tag_020, original =_
+        try:
+            tag_041, tag_546, tag_020, original = get_kormarc_tags(isbn_input)
+            st.text(f"📄 041 태그: {tag_041}")
+            if tag_546:
+                st.text(f"📄 546 태그: {tag_546}")
+            if tag_020:
+                st.text(f"📄 020 태그: {tag_020}")
+            if original:
+                st.text(f"📕 원제: {original}")
+        except Exception as e:
+            st.error(f"⚠️ 오류 발생: {e}")
+    else:
+        st.warning("ISBN을 입력해주세요.")
