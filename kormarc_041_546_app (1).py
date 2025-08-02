@@ -57,7 +57,7 @@ def detect_language(text):
     return override_language_by_keywords(text, lang)
 
 def detect_language_from_category(text):
-    words = re.split(r'[>/>\s]+', text)  # ">", "/", 공백 등으로 분리
+    words = re.split(r'[>/>\s]+', text)
     for word in words:
         if "일본" in word:
             return "jpn"
@@ -113,14 +113,15 @@ def crawl_aladin_fallback(isbn13):
         category_text = ""
         categories = soup.select("div.conts_info_list2 li")
         for cat in categories:
-        category_text += cat.get_text(separator=" ", strip=True) + " "
+            category_text += cat.get_text(separator=" ", strip=True) + " "
 
         # 디버그: 로그 및 화면 출력
         print("📘 [DEBUG] category_text =", category_text)
         st.write("📘 [DEBUG] category_text =", category_text)      
-       
+
         category_lang = detect_language_from_category(category_text)
         print("📘 [DEBUG] category_lang =", category_lang)
+        st.write("📘 [DEBUG] category_lang =", category_lang)
 
         detected_lang = ""
         if lang_info and "언어" in lang_info.text:
@@ -205,5 +206,3 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
-
-
