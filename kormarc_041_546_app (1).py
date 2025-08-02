@@ -108,8 +108,15 @@ def crawl_aladin_fallback(isbn13):
         original = soup.select_one("div.info_original")
         price = soup.select_one("span.price2")
         lang_info = soup.select_one("div.conts_info_list1")
-        category_info = soup.select_one("div.conts_info_list2")
+        
+        # ✅ 주제 분류 다중 추출 및 병합
+        category_text = ""
+        categories = soup.select("div.conts_info_list2 li")
+        for cat in categories:
+            category_text += cat.get_text(separator=" ", strip=True) + " "
+        category_lang = detect_language_from_category(category_text)
 
+        # 언어 정보 박스 우선 보조
         detected_lang = ""
         if lang_info and "언어" in lang_info.text:
             if "Japanese" in lang_info.text:
@@ -118,9 +125,6 @@ def crawl_aladin_fallback(isbn13):
                 detected_lang = "chi"
             elif "English" in lang_info.text:
                 detected_lang = "eng"
-
-        category_text = category_info.get_text(" ", strip=True) if category_info else ""
-        category_lang = detect_language_from_category(category_text)
 
         return {
             "original_title": original.text.strip() if original else "",
