@@ -6,9 +6,11 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+# 환경변수에서 API 키 로드
 load_dotenv()
 ALADIN_KEY = os.getenv("ALADIN_TTB_KEY", "ttbdawn63091003001")
 
+# ISDS 언어코드 매핑
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어',
     'rus': '러시아어', 'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어',
@@ -16,6 +18,7 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
+# 유니코드 범위 기반 언어 감지
 def detect_language_by_unicode(text):
     text = re.sub(r'[\s\W_]+', '', text)
     if not text:
@@ -35,10 +38,13 @@ def detect_language_by_unicode(text):
         return 'eng'
     return 'und'
 
+# 언어 키워드 및 특수문자 기반 오버라이드
 def override_language_by_keywords(text, initial_lang):
     text = text.lower()
+
     if initial_lang == 'chi' and re.search(r'[\u3040-\u30ff]', text):
         return 'jpn'
+
     if initial_lang == 'eng':
         if "spanish" in text or "español" in text:
             return "spa"
@@ -50,12 +56,21 @@ def override_language_by_keywords(text, initial_lang):
             return "por"
         if "german" in text or "deutsch" in text:
             return "ger"
+        if any(ch in text for ch in ['é', 'è', 'ê', 'à', 'ç', 'ù', 'ô', 'â', 'î', 'û']):
+            return "fre"
+        if any(ch in text for ch in ['ñ', 'á', 'í', 'ó', 'ú']):
+            return "spa"
+        if any(ch in text for ch in ['ã', 'õ']):
+            return "por"
+
     return initial_lang
 
+# 종합 언어 감지
 def detect_language(text):
     lang = detect_language_by_unicode(text)
     return override_language_by_keywords(text, lang)
 
+# 카테고리에서 언어 추정
 def detect_language_from_category(text):
     words = re.split(r'[>/>\s]+', text)
     for word in words:
@@ -81,6 +96,7 @@ def detect_language_from_category(text):
             return "tur"
     return None
 
+# 546 태그 생성
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes, h_code = [], None
     for part in marc_041.split():
@@ -100,9 +116,11 @@ def generate_546_from_041_kormarc(marc_041: str) -> str:
         return f"{'、'.join(langs)} 병기"
     return "언어 정보 없음"
 
+# 네임스페이스 제거
 def strip_ns(tag):
     return tag.split('}')[-1] if '}' in tag else tag
 
+# 알라딘 웹페이지 크롤링
 def crawl_aladin_fallback(isbn13):
     url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn13}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -112,7 +130,6 @@ def crawl_aladin_fallback(isbn13):
         original = soup.select_one("div.info_original")
         lang_info = soup.select_one("div.conts_info_list1")
 
-        # 주제 분류 텍스트 수집
         category_text = ""
         categories = soup.select("div.conts_info_list2 li")
         for cat in categories:
@@ -139,6 +156,7 @@ def crawl_aladin_fallback(isbn13):
         st.error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
+# KORMARC 태그 생성
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -185,7 +203,7 @@ def get_kormarc_tags(isbn):
     except Exception as e:
         return f"📕 예외 발생: {e}", "", ""
 
-# Streamlit UI
+# ✅ Streamlit UI 시작
 st.title("📘 KORMARC 041/546 태그 생성기 (카테고리 기반 언어 감지 포함)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
@@ -202,4 +220,3 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
-
