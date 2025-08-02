@@ -115,12 +115,9 @@ def crawl_aladin_fallback(isbn13):
         for cat in categories:
             category_text += cat.get_text(separator=" ", strip=True) + " "
 
-        # 디버그: 로그 및 화면 출력
-        print("📘 [DEBUG] category_text =", category_text)
-        st.write("📘 [DEBUG] category_text =", category_text)      
-
+        # 디버그 출력
+        st.write("📘 [DEBUG] category_text =", category_text)
         category_lang = detect_language_from_category(category_text)
-        print("📘 [DEBUG] category_lang =", category_lang)
         st.write("📘 [DEBUG] category_lang =", category_lang)
 
         detected_lang = ""
@@ -138,7 +135,7 @@ def crawl_aladin_fallback(isbn13):
             "subject_lang": category_lang or detected_lang
         }
     except Exception as e:
-        print("❌ crawl_aladin_fallback ERROR:", e)
+        st.error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
 def get_kormarc_tags(isbn):
@@ -178,7 +175,8 @@ def get_kormarc_tags(isbn):
         lang_a = detect_language(title)
         lang_h = subject_lang or detect_language(original_title)
 
-        tag_041 = f"041 $a{lang_a}" + (f" $h{lang_h}" if original_title else "")
+        # ✅ 원제가 없어도 lang_h만으로 $h 생성
+        tag_041 = f"041 $a{lang_a}" + (f" $h{lang_h}" if lang_h and lang_h != lang_a else "")
         tag_546 = generate_546_from_041_kormarc(tag_041)
         tag_020 = f"020 :$c{price}" if price else ""
 
