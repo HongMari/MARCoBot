@@ -67,7 +67,7 @@ def detect_language_from_category(text):
             return "eng"
         elif "프랑스" in word:
             return "fre"
-        elif "독일" in word:
+        elif "독일" in word or "오스트리아" in word:
             return "ger"
         elif "러시아" in word:
             return "rus"
@@ -202,3 +202,4 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
+
