@@ -108,15 +108,19 @@ def crawl_aladin_fallback(isbn13):
         original = soup.select_one("div.info_original")
         price = soup.select_one("span.price2")
         lang_info = soup.select_one("div.conts_info_list1")
-        
-        # ✅ 주제 분류 다중 추출 및 병합
+
+        # ✅ 주제 분류 텍스트 전부 수집
         category_text = ""
         categories = soup.select("div.conts_info_list2 li")
         for cat in categories:
             category_text += cat.get_text(separator=" ", strip=True) + " "
-        category_lang = detect_language_from_category(category_text)
+        
+        # ✅ 디버그: 실제 크롤링된 텍스트 확인
+        print("📘 [DEBUG] category_text =", category_text)
 
-        # 언어 정보 박스 우선 보조
+        category_lang = detect_language_from_category(category_text)
+        print("📘 [DEBUG] category_lang =", category_lang)
+
         detected_lang = ""
         if lang_info and "언어" in lang_info.text:
             if "Japanese" in lang_info.text:
@@ -131,7 +135,8 @@ def crawl_aladin_fallback(isbn13):
             "price": price.text.strip().replace("정가 : ", "").replace("원", "").replace(",", "").strip() if price else "",
             "subject_lang": category_lang or detected_lang
         }
-    except:
+    except Exception as e:
+        print("❌ crawl_aladin_fallback ERROR:", e)
         return {}
 
 def get_kormarc_tags(isbn):
@@ -199,3 +204,4 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
+
