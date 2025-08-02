@@ -56,6 +56,26 @@ def detect_language(text):
     lang = detect_language_by_unicode(text)
     return override_language_by_keywords(text, lang)
 
+def detect_language_from_category(text):
+    if "일본" in text:
+        return "jpn"
+    elif "중국" in text:
+        return "chi"
+    elif "영미" in text or "영어" in text:
+        return "eng"
+    elif "프랑스" in text:
+        return "fre"
+    elif "독일" in text:
+        return "ger"
+    elif "이탈리아" in text:
+        return "ita"
+    elif "스페인" in text:
+        return "spa"
+    elif "포르투갈" in text:
+        return "por"
+    else:
+        return None
+
 def generate_546_from_041_kormarc(marc_041: str) -> str:
     a_codes, h_code = [], None
     for part in marc_041.split():
@@ -87,8 +107,9 @@ def crawl_aladin_fallback(isbn13):
         original = soup.select_one("div.info_original")
         price = soup.select_one("span.price2")
         lang_info = soup.select_one("div.conts_info_list1")
-        category = soup.select_one("div.conts_info_list2")
+        category_info = soup.select_one("div.conts_info_list2")
 
+        # 언어 감지
         detected_lang = ""
         if lang_info and "언어" in lang_info.text:
             if "Japanese" in lang_info.text:
@@ -97,16 +118,15 @@ def crawl_aladin_fallback(isbn13):
                 detected_lang = "chi"
             elif "English" in lang_info.text:
                 detected_lang = "eng"
-        if not detected_lang and category:
-            if "일본" in category.text:
-                detected_lang = "jpn"
-            elif "중국" in category.text:
-                detected_lang = "chi"
+
+        # 주제 분류에서 보조 감지
+        category_text = category_info.get_text(strip=True) if category_info else ""
+        category_lang = detect_language_from_category(category_text)
 
         return {
             "original_title": original.text.strip() if original else "",
             "price": price.text.strip().replace("정가 : ", "").replace("원", "").replace(",", "").strip() if price else "",
-            "subject_lang": detected_lang
+            "subject_lang": category_lang or detected_lang  # 주제분류가 우선
         }
     except:
         return {}
@@ -157,7 +177,7 @@ def get_kormarc_tags(isbn):
     except Exception as e:
         return f"📕 예외 발생: {e}", "", "", ""
 
-st.title("📘 KORMARC 041/546/020 태그 생성기 (경량 버전)")
+st.title("📘 KORMARC 041/546/020 태그 생성기 (카테고리 기반 언어 감지 포함)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
