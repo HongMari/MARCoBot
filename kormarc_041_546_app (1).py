@@ -195,11 +195,27 @@ def get_kormarc_tags(isbn):
         subject_lang = crawl.get("subject_lang")
         category_text = crawl.get("category_text", "")
         lang_a = detect_language(title)
+        st.write("📘 [DEBUG] 제목 기반 초깃값 lang_a =", lang_a)
+        if lang_a in ['und', 'eng']:
+            st.write("📘 [DEBUG] GPT에게 본문 언어($a)를 보완 요청 중...")
+            gpt_a = gpt_guess_main_lang(title, category_text, publisher)
+            st.write("📘 [DEBUG] GPT 판단 lang_a =", gpt_a)
+            if gpt_a != 'und':
+                lang_a = gpt_a
+
         if lang_a in ['und', 'eng']:
             gpt_a = gpt_guess_main_lang(title, category_text, publisher)
             if gpt_a != 'und':
                 lang_a = gpt_a
         if original_title:
+            st.write("📘 [DEBUG] 원제 감지됨:", original_title)
+            st.write("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang)
+            lang_h = subject_lang or detect_language(original_title)
+            st.write("📘 [DEBUG] 최종 판단된 lang_h =", lang_h)
+        else:
+            st.write("📘 [DEBUG] 원제가 없어서 GPT에게 lang_h 판단 요청 중...")
+            lang_h = gpt_guess_original_lang(title, category_text, publisher)
+            st.write("📘 [DEBUG] GPT 판단 lang_h =", lang_h)
             lang_h = subject_lang or detect_language(original_title)
         else:
             lang_h = gpt_guess_original_lang(title, category_text, publisher)
