@@ -23,7 +23,7 @@ ISDS_LANGUAGE_CODES = {
 ISBN_GROUP_LANGUAGE_MAP = {
     '0': 'eng', '1': 'eng',
     '2': 'fre', '3': 'ger', '4': 'jpn', '5': 'rus', '7': 'chi',
-    '80': 'ces', '84': 'spa', '85': 'por', '88': 'ita', '89': 'kor'
+    '80': 'ces', '84': 'spa', '85': 'por', '88': 'ita', '89': 'kor', '11': 'kor'
 }
 
 def detect_language_langid(text):
@@ -39,7 +39,7 @@ def infer_language_by_isbn(isbn):
             return ISBN_GROUP_LANGUAGE_MAP[prefix]
     return None
 
-# 웹에서 원제 및 카테고리 언어 추정
+# 웹에서 원제 보완
 def crawl_aladin_fallback(isbn13):
     url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn13}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -109,13 +109,11 @@ def get_kormarc_tags(isbn):
         if not original_title:
             original_title = crawl.get("original_title", "")
 
-        lang_a = detect_language_langid(title)
-        lang_h = detect_language_langid(original_title) if original_title else None
-
-        # ISBN 그룹 보정
+        # lang_a 우선순위: ISBN 그룹 > langid
         isbn_lang = infer_language_by_isbn(isbn)
-        if lang_a == 'und' and isbn_lang:
-            lang_a = isbn_lang
+        lang_a = isbn_lang if isbn_lang else detect_language_langid(title)
+
+        lang_h = detect_language_langid(original_title) if original_title else None
 
         if lang_h and lang_h != lang_a and lang_h != "und":
             tag_041 = f"041 $a{lang_a} $h{lang_h}"
@@ -129,7 +127,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {e}", "", ""
 
 # Streamlit UI
-st.title("📘 KORMARC 041/546 태그 생성기 (langid + ISBN 그룹 보정)")
+st.title("📘 KORMARC 041/546 태그 생성기 (langid + ISBN 그룹 우선)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
