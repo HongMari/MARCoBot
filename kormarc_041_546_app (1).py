@@ -30,7 +30,7 @@ def detect_language_langid(text):
     if not text.strip():
         return 'und'
     code, prob = langid.classify(text)
-    return code if prob > 0.85 else 'und'
+    return code if prob > 0.7 else 'und'  # 기준 완화
 
 def infer_language_by_isbn(isbn):
     for length in [2, 1]:
@@ -113,7 +113,12 @@ def get_kormarc_tags(isbn):
         isbn_lang = infer_language_by_isbn(isbn)
         lang_a = isbn_lang if isbn_lang else detect_language_langid(title)
 
-        lang_h = detect_language_langid(original_title) if original_title else None
+        # 원제가 짧으면 title과 결합하여 언어 감지 보완
+        lang_h = detect_language_langid(original_title + ' ' + title) if original_title else None
+
+        # 디버그 로그 출력
+        st.write("📘 원제 원문:", original_title)
+        st.write("📘 감지된 원제 언어:", lang_h)
 
         # 언어가 같더라도 원제가 존재하면 $h 기록
         if lang_h and lang_h != "und" and original_title:
