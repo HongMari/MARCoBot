@@ -1,17 +1,17 @@
-
 import re
 import os
-import openai
 import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from openai import OpenAI
 
 # 환경변수 로드
 load_dotenv()
 ALADIN_KEY = os.getenv("ALADIN_TTB_KEY", "ttbdawn63091003001")
-openai.api_key = os.getenv("OPENAI_API_KEY")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_KEY)
 
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어',
@@ -20,7 +20,7 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
-def gpt_guess_original_lang(title: str, category: str, publisher: str, author: str = "") -> str:
+def gpt_guess_original_lang(title, category, publisher, author=""):
     prompt = f"""
     다음 도서의 정보를 기반으로 원서의 언어(041 $h)를 ISDS 코드 기준으로 유추해줘.
     - 제목: {title}
@@ -32,23 +32,21 @@ def gpt_guess_original_lang(title: str, category: str, publisher: str, author: s
     $h=[ISDS 코드]
     """
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "도서 정보를 바탕으로 원서 언어를 판단하는 사서 AI입니다."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.0
+            temperature=0
         )
-        result = response['choices'][0]['message']['content'].strip()
-        if result.startswith("$h="):
-            return result.replace("$h=", "").strip()
-        return "und"
+        content = response.choices[0].message.content.strip()
+        return content.replace("$h=", "").strip() if content.startswith("$h=") else "und"
     except Exception as e:
         st.error(f"GPT 오류: {e}")
         return "und"
 
-def gpt_guess_main_lang(title: str, category: str, publisher: str, author: str = "") -> str:
+def gpt_guess_main_lang(title, category, publisher, author=""):
     prompt = f"""
     다음 도서의 정보를 기반으로 본문의 언어(041 $a)를 ISDS 코드 기준으로 유추해줘.
     - 제목: {title}
@@ -60,18 +58,16 @@ def gpt_guess_main_lang(title: str, category: str, publisher: str, author: str =
     $a=[ISDS 코드]
     """
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "도서 정보를 바탕으로 본문 언어를 판단하는 사서 AI입니다."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.0
+            temperature=0
         )
-        result = response['choices'][0]['message']['content'].strip()
-        if result.startswith("$a="):
-            return result.replace("$a=", "").strip()
-        return "und"
+        content = response.choices[0].message.content.strip()
+        return content.replace("$a=", "").strip() if content.startswith("$a=") else "und"
     except Exception as e:
         st.error(f"GPT 오류: {e}")
         return "und"
@@ -196,7 +192,6 @@ def get_kormarc_tags(isbn):
         subject_lang = crawl.get("subject_lang")
         category_text = crawl.get("category_text", "")
 
-        # 본문 언어($a) 판단
         lang_a = detect_language(title)
         st.write("📘 [DEBUG] 제목 기반 초깃값 lang_a =", lang_a)
         if lang_a in ['und', 'eng']:
@@ -206,7 +201,6 @@ def get_kormarc_tags(isbn):
             if gpt_a != 'und':
                 lang_a = gpt_a
 
-        # 원서 언어($h) 판단
         if original_title:
             st.write("📘 [DEBUG] 원제 감지됨:", original_title)
             st.write("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang)
@@ -226,7 +220,7 @@ def get_kormarc_tags(isbn):
     except Exception as e:
         return f"📕 예외 발생: {e}", "", ""
 
-st.title("📘 KORMARC 041/546 태그 생성기 (GPT 보완 언어 감지 버전)")
+st.title("📘 KORMARC 041/546 태그 생성기 (GPT API 1.0 대응)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
