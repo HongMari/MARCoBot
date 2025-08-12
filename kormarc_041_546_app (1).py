@@ -21,11 +21,12 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
-# ===== GPT 함수 =====
-def gpt_guess_original_lang(title, category, publisher, author=""):
+# ===== GPT 판단 함수 (원서) =====
+def gpt_guess_original_lang(title, category, publisher, author="", original_title=""):
     prompt = f"""
     다음 도서의 정보를 기반으로 원서의 언어(041 $h)를 ISDS 코드 기준으로 유추해줘.
     - 제목: {title}
+    - 원제: {original_title}
     - 분류: {category}
     - 출판사: {publisher}
     - 저자: {author}
@@ -48,6 +49,7 @@ def gpt_guess_original_lang(title, category, publisher, author=""):
         st.error(f"GPT 오류: {e}")
         return "und"
 
+# ===== GPT 판단 함수 (본문) =====
 def gpt_guess_main_lang(title, category, publisher, author=""):
     prompt = f"""
     다음 도서의 정보를 기반으로 본문의 언어(041 $a)를 ISDS 코드 기준으로 유추해줘.
@@ -74,7 +76,7 @@ def gpt_guess_main_lang(title, category, publisher, author=""):
         st.error(f"GPT 오류: {e}")
         return "und"
 
-# ===== 언어 감지 함수 =====
+# ===== 언어 감지 함수들 =====
 def detect_language_by_unicode(text):
     text = re.sub(r'[\s\W_]+', '', text)
     if not text:
@@ -120,7 +122,9 @@ def detect_language_from_category(text):
         elif "튀르키예" in word or "터키" in word: return "tur"
     return None
 
-# ===== 546 태그 생성 =====
+# ===== 기타 유틸 =====
+def strip_ns(tag): return tag.split('}')[-1] if '}' in tag else tag
+
 def generate_546_from_041_kormarc(marc_041):
     a_codes, h_code = [], None
     for part in marc_041.split():
@@ -138,10 +142,7 @@ def generate_546_from_041_kormarc(marc_041):
         return f"{'、'.join(langs)} 병기"
     return "언어 정보 없음"
 
-# ===== 네임스페이스 제거 =====
-def strip_ns(tag): return tag.split('}')[-1] if '}' in tag else tag
-
-# ===== 알라딘 웹 크롤링 =====
+# ===== 웹 크롤링 =====
 def crawl_aladin_fallback(isbn13):
     url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn13}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -168,7 +169,7 @@ def crawl_aladin_fallback(isbn13):
         st.error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
-# ===== KORMARC 태그 생성 =====
+# ===== KORMARC 태그 생성기 =====
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -202,7 +203,6 @@ def get_kormarc_tags(isbn):
         subject_lang = crawl.get("subject_lang")
         category_text = crawl.get("category_text", "")
 
-        # ===== $a 판단 =====
         lang_a = detect_language(title)
         st.write("📘 [DEBUG] 제목 기반 초깃값 lang_a =", lang_a)
         if lang_a in ['und', 'eng']:
@@ -212,7 +212,6 @@ def get_kormarc_tags(isbn):
             if gpt_a != 'und':
                 lang_a = gpt_a
 
-        # ===== $h 판단 =====
         if original_title:
             st.write("📘 [DEBUG] 원제 감지됨:", original_title)
             st.write("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang)
@@ -220,14 +219,13 @@ def get_kormarc_tags(isbn):
             st.write("📘 [DEBUG] 1차 판단된 lang_h =", lang_h)
             if lang_h == "und":
                 st.write("📘 [DEBUG] GPT에게 원서 언어 보완 요청 중...")
-                lang_h = gpt_guess_original_lang(title, category_text, publisher, author)
+                lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
                 st.write("📘 [DEBUG] GPT 판단 lang_h =", lang_h)
         else:
             st.write("📘 [DEBUG] GPT 요청: 원서 언어 판단 정보 =", title, category_text, publisher, author)
-            lang_h = gpt_guess_original_lang(title, category_text, publisher, author)
+            lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
             st.write("📘 [DEBUG] GPT 판단 lang_h =", lang_h)
 
-        # ===== 태그 생성 =====
         if lang_h and lang_h != lang_a and lang_h != "und":
             tag_041 = f"041 $a{lang_a} $h{lang_h}"
         else:
