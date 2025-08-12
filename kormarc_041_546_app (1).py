@@ -196,7 +196,7 @@ def get_kormarc_tags(isbn):
         lang_a = detect_language(title)
         st.write("📘 [DEBUG] 제목 기반 초깃값 lang_a =", lang_a)
         if lang_a in ['und', 'eng']:
-            st.write("📘 [DEBUG] GPT에게 본문 언어($a)를 보완 요청 중...")
+            st.write("📘 [DEBUG] GPT 요청: 본문 언어 판단 정보 =", title, category_text, publisher, author)
             gpt_a = gpt_guess_main_lang(title, category_text, publisher, author)
             st.write("📘 [DEBUG] GPT 판단 lang_a =", gpt_a)
             if gpt_a != 'und':
@@ -208,7 +208,7 @@ def get_kormarc_tags(isbn):
             lang_h = subject_lang or detect_language(original_title)
             st.write("📘 [DEBUG] 최종 판단된 lang_h =", lang_h)
         else:
-            st.write("📘 [DEBUG] 원제가 없어서 GPT에게 lang_h 판단 요청 중...")
+            st.write("📘 [DEBUG] GPT 요청: 원서 언어 판단 정보 =", title, category_text, publisher, author)
             lang_h = gpt_guess_original_lang(title, category_text, publisher, author)
             st.write("📘 [DEBUG] GPT 판단 lang_h =", lang_h)
 
@@ -222,7 +222,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {e}", "", ""
 
 # Streamlit UI
-st.title("📘 KORMARC 041/546 태그 생성기 (GPT API 1.0)")
+st.title("📘 KORMARC 041/546 태그 생성기 (GPT + 판단 근거 표시)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
