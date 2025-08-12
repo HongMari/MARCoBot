@@ -9,7 +9,7 @@ from openai import OpenAI
 
 # 환경변수 로드
 load_dotenv()
-ALADIN_KEY = os.getenv("ALADIN_TTB_KEY", "ttbdawn63091003001")
+ALADIN_KEY = os.getenv("ALADIN_TTB_KEY")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
 
@@ -184,6 +184,7 @@ def get_kormarc_tags(isbn):
             raise ValueError("<item> 태그 없음")
         title = item.findtext("title", default="")
         publisher = item.findtext("publisher", default="")
+        author = item.findtext("author", default="")
         subinfo = item.find("subInfo")
         original_title = subinfo.findtext("originalTitle") if subinfo is not None else ""
         crawl = crawl_aladin_fallback(isbn)
@@ -196,7 +197,7 @@ def get_kormarc_tags(isbn):
         st.write("📘 [DEBUG] 제목 기반 초깃값 lang_a =", lang_a)
         if lang_a in ['und', 'eng']:
             st.write("📘 [DEBUG] GPT에게 본문 언어($a)를 보완 요청 중...")
-            gpt_a = gpt_guess_main_lang(title, category_text, publisher)
+            gpt_a = gpt_guess_main_lang(title, category_text, publisher, author)
             st.write("📘 [DEBUG] GPT 판단 lang_a =", gpt_a)
             if gpt_a != 'und':
                 lang_a = gpt_a
@@ -208,7 +209,7 @@ def get_kormarc_tags(isbn):
             st.write("📘 [DEBUG] 최종 판단된 lang_h =", lang_h)
         else:
             st.write("📘 [DEBUG] 원제가 없어서 GPT에게 lang_h 판단 요청 중...")
-            lang_h = gpt_guess_original_lang(title, category_text, publisher)
+            lang_h = gpt_guess_original_lang(title, category_text, publisher, author)
             st.write("📘 [DEBUG] GPT 판단 lang_h =", lang_h)
 
         if lang_h and lang_h != lang_a and lang_h != "und":
@@ -220,7 +221,8 @@ def get_kormarc_tags(isbn):
     except Exception as e:
         return f"📕 예외 발생: {e}", "", ""
 
-st.title("📘 KORMARC 041/546 태그 생성기 (GPT API 1.0 대응)")
+# Streamlit UI
+st.title("📘 KORMARC 041/546 태그 생성기 (GPT API 1.0)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
