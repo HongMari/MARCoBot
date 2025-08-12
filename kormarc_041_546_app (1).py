@@ -115,7 +115,8 @@ def get_kormarc_tags(isbn):
 
         lang_h = detect_language_langid(original_title) if original_title else None
 
-        if lang_h and lang_h != lang_a and lang_h != "und":
+        # 언어가 같더라도 원제가 존재하면 $h 기록
+        if lang_h and lang_h != "und" and original_title:
             tag_041 = f"041 $a{lang_a} $h{lang_h}"
         else:
             tag_041 = f"041 $a{lang_a}"
