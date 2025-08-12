@@ -1,3 +1,4 @@
+
 import re
 import os
 import openai
@@ -7,12 +8,12 @@ import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-# 📌 환경 변수 로드
+# 📦 환경변수 로드
 load_dotenv()
 ALADIN_KEY = os.getenv("ALADIN_TTB_KEY")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# 📘 ISDS 언어 코드 정의
+# 언어코드 매핑
 ISDS_LANGUAGE_CODES = {
     'kor': '한국어', 'eng': '영어', 'jpn': '일본어', 'chi': '중국어',
     'rus': '러시아어', 'ara': '아랍어', 'fre': '프랑스어', 'ger': '독일어',
@@ -20,10 +21,12 @@ ISDS_LANGUAGE_CODES = {
     'und': '알 수 없음'
 }
 
-# 📘 GPT 언어 추정 함수
+# GPT로 언어 판단
 def gpt_guess_lang(title, category, publisher, author=""):
+    roman_hint = "이 도서의 제목은 로마자 표기로 되어 있지만 반드시 영어(eng)라는 보장은 없습니다.\n" if re.match(r'^[A-Za-z0-9\s\W]+$', title) else ""
     prompt = f"""
-    다음 도서 정보를 바탕으로 원서의 언어(041 $h)를 ISDS 코드로 추정해줘.
+    {roman_hint}
+    다음 도서 정보를 바탕으로 원서의 언어(041 $h)를 ISDS 코드로 정확히 추정해줘.
     - 제목: {title}
     - 분류: {category}
     - 출판사: {publisher}
@@ -36,10 +39,10 @@ def gpt_guess_lang(title, category, publisher, author=""):
         response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "도서 정보를 바탕으로 원서 언어를 추정하는 사서 AI입니다."},
+                {"role": "system", "content": "도서 정보를 바탕으로 언어를 감별하는 사서 AI입니다."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.0
+            temperature=0
         )
         result = response.choices[0].message.content.strip()
         if result.startswith("$h="):
@@ -48,7 +51,7 @@ def gpt_guess_lang(title, category, publisher, author=""):
         st.error(f"GPT 오류: {e}")
     return "und"
 
-# 📘 유니코드 기반 언어 감지
+# 유니코드 기반 언어 감지
 def detect_language_by_unicode(text):
     text = re.sub(r'[\s\W_]+', '', text)
     if not text: return 'und'
@@ -60,7 +63,7 @@ def detect_language_by_unicode(text):
     elif '\u0e00' <= ch <= '\u0e7f': return 'tha'
     return 'und'
 
-# 📘 키워드 기반 보정
+# 키워드 기반 보정
 def override_by_keywords(text, lang):
     text = text.lower()
     if lang == 'chi' and re.search(r'[\u3040-\u30ff]', text): return 'jpn'
@@ -75,7 +78,7 @@ def override_by_keywords(text, lang):
 def detect_language(text):
     return override_by_keywords(text, detect_language_by_unicode(text))
 
-# 📘 카테고리 기반 언어 감지
+# 카테고리 기반 언어 감지
 def detect_from_category(text):
     if any(w in text for w in ["일본"]): return "jpn"
     if any(w in text for w in ["중국"]): return "chi"
@@ -89,7 +92,7 @@ def detect_from_category(text):
     if any(w in text for w in ["튀르키예", "터키"]): return "tur"
     return None
 
-# 📘 546 태그 생성
+# 546 생성
 def generate_546(marc_041):
     a_codes, h_code = [], None
     for part in marc_041.split():
@@ -106,7 +109,7 @@ def generate_546(marc_041):
 
 def strip_ns(tag): return tag.split('}')[-1] if '}' in tag else tag
 
-# 📘 알라딘 웹 크롤링
+# 크롤링
 def crawl_aladin(isbn):
     url = f"https://www.aladin.co.kr/shop/wproduct.aspx?ISBN={isbn}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -124,7 +127,7 @@ def crawl_aladin(isbn):
         st.error(f"크롤링 오류: {e}")
         return {"original_title": "", "category_text": ""}
 
-# 📘 최종 태그 생성기
+# 태그 생성기
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -138,8 +141,7 @@ def get_kormarc_tags(isbn):
 
     try:
         r = requests.get(url, params=params)
-        if r.status_code != 200:
-            raise Exception("API 오류")
+        if r.status_code != 200: raise Exception("API 오류")
         root = ET.fromstring(r.content)
         for e in root.iter(): e.tag = strip_ns(e.tag)
 
@@ -157,7 +159,7 @@ def get_kormarc_tags(isbn):
             original_title = crawl["original_title"]
         category_text = crawl["category_text"]
 
-        # [$a] 본문 언어 판단
+        # 본문 언어
         lang_a = detect_language(title)
         if lang_a == "und":
             cat_guess = detect_from_category(category_text)
@@ -169,13 +171,13 @@ def get_kormarc_tags(isbn):
                 lang_a = gpt_guess_lang(title, category_text, publisher, author)
                 st.write("📘 [DEBUG][$a] GPT 판단 =", lang_a)
 
-        # [$h] 원서 언어 판단
+        # 원서 언어
         if original_title:
             lang_h = detect_language(original_title)
             cat_h = detect_from_category(category_text)
             if cat_h:
                 lang_h = cat_h
-                st.write("📘 [DEBUG][$h] 카테고리 기반 후보 =", lang_h)
+                st.write("📘 [DEBUG][$h] 카테고리 기반 판단 =", lang_h)
         else:
             st.write("📘 [DEBUG][$h] GPT 요청 →", title, category_text, publisher, author)
             lang_h = gpt_guess_lang(title, category_text, publisher, author)
@@ -191,8 +193,8 @@ def get_kormarc_tags(isbn):
     except Exception as e:
         return f"📕 오류: {e}", "", ""
 
-# 📘 Streamlit UI
-st.title("📘 KORMARC 041/546 태그 생성기 (GPT + 카테고리 기반 개선)")
+# Streamlit UI
+st.title("📘 KORMARC 041/546 태그 생성기")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
