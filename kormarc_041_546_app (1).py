@@ -216,8 +216,17 @@ def get_kormarc_tags(isbn):
             st.write("📘 [DEBUG] 원제가 없어서 GPT에게 lang_h 판단 요청 중...")
             lang_h = gpt_guess_original_lang(title, category_text, publisher)
             st.write("📘 [DEBUG] GPT 판단 lang_h =", lang_h)
+            st.write("📘 [DEBUG] 원제 감지됨:", original_title)
+            st.write("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang)
+            
+            st.write("📘 [DEBUG] 최종 판단된 lang_h =", lang_h)
         else:
-            lang_h = gpt_guess_original_lang(title, category_text, publisher)
+            st.write("📘 [DEBUG] 원제가 없어서 GPT에게 lang_h 판단 요청 중...")
+            
+            st.write("📘 [DEBUG] GPT 판단 lang_h =", lang_h)
+            
+        else:
+            
         if lang_h and lang_h != lang_a and lang_h != "und":
             tag_041 = f"041 $a{lang_a} $h{lang_h}"
         else:
@@ -243,4 +252,3 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
-
