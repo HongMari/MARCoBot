@@ -108,7 +108,7 @@ def detect_language(text):
     return override_language_by_keywords(text, lang)
 
 def detect_language_from_category(text):
-    words = re.split(r'[>/>\s]+', text or "")
+    words = re.split(r'[>/\s]+', text or "")
     for word in words:
         if "일본" in word: return "jpn"
         elif "중국" in word: return "chi"
@@ -122,34 +122,100 @@ def detect_language_from_category(text):
         elif "튀르키예" in word or "터키" in word: return "tur"
     return None
 
+# ===== 카테고리 토크나이저/키워드 유틸 =====
+def tokenize_category(text: str):
+    """
+    카테고리 문자열을 단어 토큰 리스트로 변환.
+    '국내도서 > 소설/시/희곡 > 과학소설(SF)' -> ['국내도서','소설','시','희곡','과학소설','sf']
+    """
+    if not text:
+        return []
+    # 구분자: > / 공백, 괄호 제거
+    t = re.sub(r'[()]+', ' ', text)
+    raw = re.split(r'[>/\s]+', t)
+    tokens = []
+    for w in raw:
+        w = w.strip()
+        if not w:
+            continue
+        # '소설/시/희곡' 같은 묶음을 다시 분해
+        if '/' in w and w.count('/') <= 3 and len(w) <= 20:
+            parts = [p for p in w.split('/') if p]
+            tokens.extend(parts)
+        else:
+            tokens.append(w)
+    # 소문자 버전도 추가(영문 대응)
+    lower_tokens = tokens + [w.lower() for w in tokens if any('A' <= ch <= 'Z' or 'a' <= ch <= 'z' for ch in w)]
+    return lower_tokens
+
+def has_kw_token(tokens, kws):
+    """토큰 리스트에서 '정확히 같은' 키워드가 있는지 검사(부분 일치 배제)."""
+    s = set(tokens)
+    for k in kws:
+        if k in s:
+            return True
+    return False
+
+def trigger_kw_token(tokens, kws):
+    """매칭된 키워드를 하나 돌려줌(디버그용)."""
+    s = set(tokens)
+    for k in kws:
+        if k in s:
+            return k
+    return None
+
 # ===== 문학/비문학 판정 (보강) =====
+def is_literature_top(category_text: str) -> bool:
+    """최상위/상위에 문학 장르가 있는지 간단 확인."""
+    return "소설/시/희곡" in (category_text or "")
+
 def is_literature_category(category_text: str) -> bool:
     """
-    알라딘 카테고리 문자열에서 문학/소설/시/희곡 계열이면 True.
+    문학(소설/시/희곡) 관련 키워드가 있으면 True.
     ※ '에세이'는 문학 판정에서 제외(논픽션 성격이 강함).
     """
-    ct = (category_text or "").lower()
-    # 한국어 키워드 (에세이 제외)
-    ko_hits = ["문학", "소설/시/희곡", "소설", "시", "희곡"]
-    # 영문 키워드
+    tokens = tokenize_category(category_text or "")
+    ko_hits = ["문학", "소설", "시", "희곡"]
     en_hits = ["literature", "fiction", "novel", "poetry", "poem", "drama", "play"]
-    return any(k in (category_text or "") for k in ko_hits) or any(k in ct for k in en_hits)
+    return has_kw_token(tokens, ko_hits) or has_kw_token(tokens, en_hits)
 
 def is_nonfiction_override(category_text: str) -> bool:
     """
     문학처럼 보여도 '역사/지역/전기/사회과학/에세이' 등 비문학 지표가 있으면 비문학으로 강제.
+    단, 문학 최상위(소설/시/희곡)가 있으면 '과학/기술'은 오버라이드에서 제외하여
+    '과학소설(SF)' 같은 정상적인 문학 장르가 비문학으로 뒤집히지 않게 함.
     """
-    ct = (category_text or "").lower()
-    ko_nf = [
-        "역사", "사 ", "근현대사", "서양사", "유럽사", "독일/오스트리아사",
-        "전기", "평전", "사회", "정치", "철학", "경제", "경영", "과학", "기술",
-        "인문", "에세이", "수필"
-    ]
-    en_nf = [
-        "history", "biography", "memoir", "politics", "philosophy", "economics",
-        "science", "technology", "nonfiction", "essay", "essays"
-    ]
-    return any(k in (category_text or "") for k in ko_nf) or any(k in ct for k in en_nf)
+    tokens = tokenize_category(category_text or "")
+    lit_top = is_literature_top(category_text or "")
+
+    # 엄격 비문학 키워드(항상 오버라이드)
+    ko_nf_strict = ["역사", "근현대사", "서양사", "유럽사", "전기", "평전",
+                    "사회", "정치", "철학", "경제", "경영", "인문", "에세이", "수필"]
+    en_nf_strict = ["history", "biography", "memoir", "politics", "philosophy",
+                    "economics", "science", "technology", "nonfiction", "essay", "essays"]
+
+    # '과학','기술'은 문학 최상위일 경우 제외(=SF 보호)
+    sci_keys = ["과학", "기술"]
+    sci_keys_en = ["science", "technology"]
+
+    # 먼저 엄격 비문학 키워드로 체크
+    k = trigger_kw_token(tokens, ko_nf_strict) or trigger_kw_token(tokens, en_nf_strict)
+    if k:
+        st.write(f"🔎 [판정근거] 비문학 키워드 발견: '{k}'")
+        return True
+
+    # 문학 최상위가 아니면 과학/기술도 비문학 신호로 허용
+    if not lit_top:
+        k2 = trigger_kw_token(tokens, sci_keys) or trigger_kw_token(tokens, sci_keys_en)
+        if k2:
+            st.write(f"🔎 [판정근거] 비문학 최상위 추정 & '{k2}' 발견 → 비문학 오버라이드")
+            return True
+
+    # 문학 최상위(+SF) 보호: 과학/기술로는 뒤집지 않음
+    if lit_top:
+        st.write("🔎 [판정근거] 문학 최상위 감지: '과학/기술'은 오버라이드에서 제외(SF 보호).")
+
+    return False
 
 # ===== 기타 유틸 =====
 def strip_ns(tag): return tag.split('}')[-1] if '}' in tag else tag
@@ -198,7 +264,7 @@ def crawl_aladin_fallback(isbn13):
         st.error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
-# ===== $h 우선순위 결정 (문학/비문학 판정만 보강 + 사람친화 메시지) =====
+# ===== $h 우선순위 결정 (설명 메시지 포함) =====
 def determine_h_language(
     title: str,
     original_title: str,
@@ -210,7 +276,7 @@ def determine_h_language(
     """
     문학 작품이면: 카테고리/웹 기반 → (부족 시) GPT
     문학 외 자료면: GPT → (부족 시) 카테고리/웹 기반
-    ※ 문학/비문학 판정만 보강, 메시지는 사람이 이해하기 쉬운 설명으로 출력.
+    (과학소설(SF) 오판 방지: 문학 최상위 시 '과학/기술'로는 비문학 오버라이드 금지)
     """
     lit_raw = is_literature_category(category_text)
     nf_override = is_nonfiction_override(category_text)
@@ -316,7 +382,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {e}", "", ""
 
 # ===== Streamlit UI =====
-st.title("📘 KORMARC 041/546 태그 생성기 (설명 메시지 개선판)")
+st.title("📘 KORMARC 041/546 태그 생성기 (문학/SF 오판 방지 개선판)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
