@@ -198,7 +198,7 @@ def crawl_aladin_fallback(isbn13):
         st.error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
-# ===== $h 우선순위 결정 (문학/비문학 판정만 보강) =====
+# ===== $h 우선순위 결정 (문학/비문학 판정만 보강 + 사람친화 메시지) =====
 def determine_h_language(
     title: str,
     original_title: str,
@@ -210,21 +210,40 @@ def determine_h_language(
     """
     문학 작품이면: 카테고리/웹 기반 → (부족 시) GPT
     문학 외 자료면: GPT → (부족 시) 카테고리/웹 기반
-    ※ 문학/비문학 판정만 보강, 나머지 흐름은 기존과 동일.
+    ※ 문학/비문학 판정만 보강, 메시지는 사람이 이해하기 쉬운 설명으로 출력.
     """
-    lit_raw = is_literature_category(category_text, user_extra=user_lit_keywords)
-    nf_override = is_nonfiction_override(category_text, user_extra=user_nonlit_keywords)
+    lit_raw = is_literature_category(category_text)
+    nf_override = is_nonfiction_override(category_text)
     is_lit_final = lit_raw and not nf_override
-    
-    # 사람이 읽기 쉽게 설명
+
+    # 사람이 읽기 쉬운 설명
     if lit_raw and not nf_override:
-    st.write("📘 [판정] 이 책은 문학(소설/시/희곡 등)으로 분류됩니다.")
+        st.write("📘 [판정] 이 자료는 문학(소설/시/희곡 등) 성격이 뚜렷합니다.")
     elif lit_raw and nf_override:
-    st.write("📘 [판정] 겉보기에는 문학이지만, '역사·에세이·사회과학' 등 비문학 요소가 섞여 최종적으로는 비문학으로 분류될 수 있습니다.")
+        st.write("📘 [판정] 겉보기에는 문학이지만, '역사·에세이·사회과학' 등 비문학 요소가 함께 보여 최종적으로는 비문학으로 처리될 수 있습니다.")
     elif not lit_raw and nf_override:
-    st.write("📘 [판정] 문학적 특징은 없고, 비문학(역사·사회·철학 등)으로 분류됩니다.")
+        st.write("📘 [판정] 문학적 단서는 없고, 비문학(역사·사회·철학 등) 성격이 강합니다.")
     else:
-    st.write("📘 [판정] 문학/비문학 단서가 뚜렷하지 않아 추가 판단이 필요합니다.")
+        st.write("📘 [판정] 문학/비문학 판단 단서가 약해 추가 판단이 필요합니다.")
+
+    rule_from_original = detect_language(original_title) if original_title else "und"
+
+    if is_lit_final:
+        # 1순위: 카테고리/웹 기반(크롤링 subject_lang) → 2순위: 원제 유니코드 → 3순위: GPT
+        lang_h = subject_lang or rule_from_original
+        st.write(f"📘 [설명] (문학 흐름) 카테고리/웹 정보로 우선 판단 → 현재 후보: {lang_h or 'und'}")
+        if not lang_h or lang_h == "und":
+            st.write("📘 [설명] (문학 흐름) 보완을 위해 GPT에 원서 언어 질의…")
+            lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
+            st.write(f"📘 [설명] (문학 흐름) GPT 판단 결과: {lang_h}")
+    else:
+        # 비문학: 1순위: GPT → 2순위: 카테고리/웹 기반 → 3순위: 원제 유니코드
+        st.write("📘 [설명] (비문학 흐름) 우선 GPT로 원서 언어를 판단합니다…")
+        lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
+        st.write(f"📘 [설명] (비문학 흐름) GPT 판단 결과: {lang_h or 'und'}")
+        if not lang_h or lang_h == "und":
+            lang_h = subject_lang or rule_from_original
+            st.write(f"📘 [설명] (비문학 흐름) 보조 정보로 카테고리/웹/원제 규칙 적용 → 후보: {lang_h or 'und'}")
 
     return lang_h or "und"
 
@@ -266,13 +285,13 @@ def get_kormarc_tags(isbn):
         lang_a = detect_language(title)
         st.write("📘 [DEBUG] 제목 기반 초깃값 lang_a =", lang_a)
         if lang_a in ['und', 'eng']:
-            st.write("📘 [DEBUG] GPT 요청: 본문 언어 판단 정보 =", title, category_text, publisher, author)
+            st.write("📘 [설명] 제목만으로 판단이 애매하여 GPT에 본문 언어를 질의합니다…")
             gpt_a = gpt_guess_main_lang(title, category_text, publisher, author)
-            st.write("📘 [DEBUG] GPT 판단 lang_a =", gpt_a)
+            st.write(f"📘 [설명] GPT 판단 lang_a = {gpt_a}")
             if gpt_a != 'und':
                 lang_a = gpt_a
 
-        # ---- $h: 원저 언어 (문학/비문학 판정만 보강) ----
+        # ---- $h: 원저 언어 (문학/비문학 판정 보강 + 설명 메시지) ----
         st.write("📘 [DEBUG] 원제 감지됨:", bool(original_title), "| 원제:", original_title or "(없음)")
         st.write("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang)
         lang_h = determine_h_language(
@@ -283,7 +302,7 @@ def get_kormarc_tags(isbn):
             author=author,
             subject_lang=subject_lang
         )
-        st.write("📘 [DEBUG] 최종 lang_h =", lang_h)
+        st.write("📘 [결과] 최종 원서 언어(h) =", lang_h)
 
         # ---- 태그 조합 ----
         if lang_h and lang_h != lang_a and lang_h != "und":
@@ -297,7 +316,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {e}", "", ""
 
 # ===== Streamlit UI =====
-st.title("📘 KORMARC 041/546 태그 생성기 (문학/비문학 판정 보강)")
+st.title("📘 KORMARC 041/546 태그 생성기 (설명 메시지 개선판)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
@@ -313,5 +332,3 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
-
-
