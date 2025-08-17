@@ -212,29 +212,19 @@ def determine_h_language(
     문학 외 자료면: GPT → (부족 시) 카테고리/웹 기반
     ※ 문학/비문학 판정만 보강, 나머지 흐름은 기존과 동일.
     """
-    lit_raw = is_literature_category(category_text)
-    nf_override = is_nonfiction_override(category_text)
-    is_lit_final = lit_raw and not nf_override
-    st.write(f"📘 [DEBUG] 문학 판정: raw={lit_raw}, nf_override={nf_override}, final={is_lit_final}")
+    lit_raw = is_literature_category(category_text, user_extra=user_lit_keywords)
+nf_override = is_nonfiction_override(category_text, user_extra=user_nonlit_keywords)
+is_lit_final = lit_raw and not nf_override
 
-    rule_from_original = detect_language(original_title) if original_title else "und"
-
-    if is_lit_final:
-        # 1순위: 카테고리/웹 기반(크롤링 subject_lang) → 2순위: 원제 유니코드 → 3순위: GPT
-        lang_h = subject_lang or rule_from_original
-        st.write("📘 [DEBUG] (문학) 1차 lang_h 후보 =", lang_h)
-        if not lang_h or lang_h == "und":
-            st.write("📘 [DEBUG] (문학) GPT 보완 시도…")
-            lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
-            st.write("📘 [DEBUG] (문학) GPT 판단 lang_h =", lang_h)
-    else:
-        # 비문학: 1순위: GPT → 2순위: 카테고리/웹 기반 → 3순위: 원제 유니코드
-        st.write("📘 [DEBUG] (비문학) GPT 선행 판단…")
-        lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
-        st.write("📘 [DEBUG] (비문학) GPT 판단 lang_h =", lang_h)
-        if not lang_h or lang_h == "und":
-            lang_h = subject_lang or rule_from_original
-            st.write("📘 [DEBUG] (비문학) 보완 lang_h =", lang_h)
+# 사람이 읽기 쉽게 설명
+if lit_raw and not nf_override:
+    st.write("📘 [판정] 이 책은 문학(소설/시/희곡 등)으로 분류됩니다.")
+elif lit_raw and nf_override:
+    st.write("📘 [판정] 겉보기에는 문학이지만, '역사·에세이·사회과학' 등 비문학 요소가 섞여 최종적으로는 비문학으로 분류될 수 있습니다.")
+elif not lit_raw and nf_override:
+    st.write("📘 [판정] 문학적 특징은 없고, 비문학(역사·사회·철학 등)으로 분류됩니다.")
+else:
+    st.write("📘 [판정] 문학/비문학 단서가 뚜렷하지 않아 추가 판단이 필요합니다.")
 
     return lang_h or "und"
 
@@ -323,3 +313,4 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
+
