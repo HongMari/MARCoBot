@@ -108,7 +108,7 @@ def detect_language(text):
     return override_language_by_keywords(text, lang)
 
 def detect_language_from_category(text):
-    words = re.split(r'[>/>\s]+', text)
+    words = re.split(r'[>/>\s]+', text or "")
     for word in words:
         if "일본" in word: return "jpn"
         elif "중국" in word: return "chi"
@@ -122,18 +122,34 @@ def detect_language_from_category(text):
         elif "튀르키예" in word or "터키" in word: return "tur"
     return None
 
-# ===== 카테고리: 문학 여부 판단 (신규) =====
+# ===== 문학/비문학 판정 (보강) =====
 def is_literature_category(category_text: str) -> bool:
     """
     알라딘 카테고리 문자열에서 문학/소설/시/희곡 계열이면 True.
-    한국어/영어 키워드 모두 대응.
+    ※ '에세이'는 문학 판정에서 제외(논픽션 성격이 강함).
     """
     ct = (category_text or "").lower()
-    # 한국어 주요 키워드
-    ko_hits = ["문학", "소설/시/희곡", "소설", "시", "희곡", "에세이", "수필"]
-    # 영문 주요 키워드 (외서 카테고리 대비)
-    en_hits = ["literature", "fiction", "novel", "poetry", "poem", "drama", "play", "essays"]
-    return any(k in category_text for k in ko_hits) or any(k in ct for k in en_hits)
+    # 한국어 키워드 (에세이 제외)
+    ko_hits = ["문학", "소설/시/희곡", "소설", "시", "희곡"]
+    # 영문 키워드
+    en_hits = ["literature", "fiction", "novel", "poetry", "poem", "drama", "play"]
+    return any(k in (category_text or "") for k in ko_hits) or any(k in ct for k in en_hits)
+
+def is_nonfiction_override(category_text: str) -> bool:
+    """
+    문학처럼 보여도 '역사/지역/전기/사회과학/에세이' 등 비문학 지표가 있으면 비문학으로 강제.
+    """
+    ct = (category_text or "").lower()
+    ko_nf = [
+        "역사", "사 ", "근현대사", "서양사", "유럽사", "독일/오스트리아사",
+        "전기", "평전", "사회", "정치", "철학", "경제", "경영", "과학", "기술",
+        "인문", "에세이", "수필"
+    ]
+    en_nf = [
+        "history", "biography", "memoir", "politics", "philosophy", "economics",
+        "science", "technology", "nonfiction", "essay", "essays"
+    ]
+    return any(k in (category_text or "") for k in ko_nf) or any(k in ct for k in en_nf)
 
 # ===== 기타 유틸 =====
 def strip_ns(tag): return tag.split('}')[-1] if '}' in tag else tag
@@ -182,7 +198,7 @@ def crawl_aladin_fallback(isbn13):
         st.error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
-# ===== $h 우선순위 결정 로직 (신규 핵심) =====
+# ===== $h 우선순위 결정 (문학/비문학 판정만 보강) =====
 def determine_h_language(
     title: str,
     original_title: str,
@@ -194,31 +210,30 @@ def determine_h_language(
     """
     문학 작품이면: 카테고리/웹 기반 → (부족 시) GPT
     문학 외 자료면: GPT → (부족 시) 카테고리/웹 기반
-    보조 규칙으로 original_title의 유니코드 기반 감지도 섞어 사용
+    ※ 문학/비문학 판정만 보강, 나머지 흐름은 기존과 동일.
     """
-    lit = is_literature_category(category_text)
-    st.write(f"📘 [DEBUG] 문학 카테고리 여부: {lit}")
+    lit_raw = is_literature_category(category_text)
+    nf_override = is_nonfiction_override(category_text)
+    is_lit_final = lit_raw and not nf_override
+    st.write(f"📘 [DEBUG] 문학 판정: raw={lit_raw}, nf_override={nf_override}, final={is_lit_final}")
 
-    # 후보값들
-    rule_from_category = subject_lang
     rule_from_original = detect_language(original_title) if original_title else "und"
 
-    if lit:
-        # 1순위: 카테고리/웹 기반
-        lang_h = rule_from_category or rule_from_original
+    if is_lit_final:
+        # 1순위: 카테고리/웹 기반(크롤링 subject_lang) → 2순위: 원제 유니코드 → 3순위: GPT
+        lang_h = subject_lang or rule_from_original
         st.write("📘 [DEBUG] (문학) 1차 lang_h 후보 =", lang_h)
         if not lang_h or lang_h == "und":
             st.write("📘 [DEBUG] (문학) GPT 보완 시도…")
             lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
             st.write("📘 [DEBUG] (문학) GPT 판단 lang_h =", lang_h)
     else:
-        # 1순위: GPT
+        # 비문학: 1순위: GPT → 2순위: 카테고리/웹 기반 → 3순위: 원제 유니코드
         st.write("📘 [DEBUG] (비문학) GPT 선행 판단…")
         lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
         st.write("📘 [DEBUG] (비문학) GPT 판단 lang_h =", lang_h)
         if not lang_h or lang_h == "und":
-            # 2순위: 카테고리/웹 기반
-            lang_h = rule_from_category or rule_from_original
+            lang_h = subject_lang or rule_from_original
             st.write("📘 [DEBUG] (비문학) 보완 lang_h =", lang_h)
 
     return lang_h or "und"
@@ -267,7 +282,7 @@ def get_kormarc_tags(isbn):
             if gpt_a != 'und':
                 lang_a = gpt_a
 
-        # ---- $h: 원저 언어 (우선순위 개편) ----
+        # ---- $h: 원저 언어 (문학/비문학 판정만 보강) ----
         st.write("📘 [DEBUG] 원제 감지됨:", bool(original_title), "| 원제:", original_title or "(없음)")
         st.write("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang)
         lang_h = determine_h_language(
@@ -292,7 +307,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {e}", "", ""
 
 # ===== Streamlit UI =====
-st.title("📘 KORMARC 041/546 태그 생성기 (문학=카테고리 우선 / 비문학=GPT 우선)")
+st.title("📘 KORMARC 041/546 태그 생성기 (문학/비문학 판정 보강)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
