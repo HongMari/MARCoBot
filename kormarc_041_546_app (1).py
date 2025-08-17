@@ -213,17 +213,17 @@ def determine_h_language(
     ※ 문학/비문학 판정만 보강, 나머지 흐름은 기존과 동일.
     """
     lit_raw = is_literature_category(category_text, user_extra=user_lit_keywords)
-nf_override = is_nonfiction_override(category_text, user_extra=user_nonlit_keywords)
-is_lit_final = lit_raw and not nf_override
-
-# 사람이 읽기 쉽게 설명
-if lit_raw and not nf_override:
+    nf_override = is_nonfiction_override(category_text, user_extra=user_nonlit_keywords)
+    is_lit_final = lit_raw and not nf_override
+    
+    # 사람이 읽기 쉽게 설명
+    if lit_raw and not nf_override:
     st.write("📘 [판정] 이 책은 문학(소설/시/희곡 등)으로 분류됩니다.")
-elif lit_raw and nf_override:
+    elif lit_raw and nf_override:
     st.write("📘 [판정] 겉보기에는 문학이지만, '역사·에세이·사회과학' 등 비문학 요소가 섞여 최종적으로는 비문학으로 분류될 수 있습니다.")
-elif not lit_raw and nf_override:
+    elif not lit_raw and nf_override:
     st.write("📘 [판정] 문학적 특징은 없고, 비문학(역사·사회·철학 등)으로 분류됩니다.")
-else:
+    else:
     st.write("📘 [판정] 문학/비문학 단서가 뚜렷하지 않아 추가 판단이 필요합니다.")
 
     return lang_h or "und"
@@ -313,4 +313,5 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
+
 
