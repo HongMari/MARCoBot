@@ -20,35 +20,59 @@ ISDS_LANGUAGE_CODES = {
     'ita': '이탈리아어', 'spa': '스페인어', 'por': '포르투갈어', 'tur': '터키어',
     'und': '알 수 없음'
 }
-ALLOWED_CODES = set(ISDS_LANGUAGE_CODES.keys()) - {"und"}  # 허용코드 집합
+ALLOWED_CODES = set(ISDS_LANGUAGE_CODES.keys()) - {"und"}
+
+# ===== 공통 유틸: GPT 응답 파싱(코드 + 이유) =====
+def _extract_code_and_reason(content, code_key="$h"):
+    code, reason, signals = "und", "", ""
+    lines = [l.strip() for l in (content or "").splitlines() if l.strip()]
+    for ln in lines:
+        if ln.startswith(f"{code_key}="):
+            code = ln.split("=", 1)[1].strip()
+        elif ln.lower().startswith("#reason="):
+            reason = ln.split("=", 1)[1].strip()
+        elif ln.lower().startswith("#signals="):
+            signals = ln.split("=", 1)[1].strip()
+    return code, reason, signals
 
 # ===== GPT 판단 함수 (원서; 일반) =====
 def gpt_guess_original_lang(title, category, publisher, author="", original_title=""):
     prompt = f"""
-    다음 도서 정보를 바탕으로 원서의 언어(041 $h)를 ISDS 코드로 추정해줘.
+    아래 도서의 원서 언어(041 $h)를 ISDS 코드로 추정해줘.
+    가능한 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
+
+    도서정보:
     - 제목: {title}
-    - 원제: {original_title}
+    - 원제: {original_title or "(없음)"}
     - 분류: {category}
     - 출판사: {publisher}
     - 저자: {author}
-    가능한 ISDS 언어코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
-    중요: 응답은 반드시 아래 형식 한 줄만 출력
+
+    지침:
+    - 국가/지역을 언어로 곧바로 치환하지 말 것.
+    - 저자 국적·주 집필 언어·최초 출간 언어를 우선 고려.
+    - 불확실하면 임의 추정 대신 'und' 사용.
+
+    출력형식(정확히 이 2~3줄):
     $h=[ISDS 코드]
-    """
+    #reason=[짧게 근거 요약]
+    #signals=[잡은 단서들, 콤마로](선택)
+    """.strip()
     try:
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "도서 정보를 바탕으로 원서 언어를 판단하는 사서 AI입니다."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "system","content":"사서용 언어 추정기"},
+                      {"role":"user","content":prompt}],
             temperature=0
         )
-        content = (response.choices[0].message.content or "").strip()
-        if content.startswith("$h="):
-            code = content.replace("$h=", "").strip()
-            return code if code in ALLOWED_CODES else "und"
-        return "und"
+        content = (resp.choices[0].message.content or "").strip()
+        code, reason, signals = _extract_code_and_reason(content, "$h")
+        if code not in ALLOWED_CODES:
+            code = "und"
+        st.write(f"🧭 [GPT 근거] $h={code}")
+        if reason: st.write(f"🧭 [이유] {reason}")
+        if signals: st.write(f"🧭 [단서] {signals}")
+        return code
     except Exception as e:
         st.error(f"GPT 오류: {e}")
         return "und"
@@ -56,65 +80,80 @@ def gpt_guess_original_lang(title, category, publisher, author="", original_titl
 # ===== GPT 판단 함수 (본문) =====
 def gpt_guess_main_lang(title, category, publisher, author=""):
     prompt = f"""
-    다음 도서 정보를 바탕으로 본문의 언어(041 $a)를 ISDS 코드로 추정해줘.
+    아래 도서의 본문 언어(041 $a)를 ISDS 코드로 추정.
+    가능한 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
+
+    입력:
     - 제목: {title}
     - 분류: {category}
     - 출판사: {publisher}
     - 저자: {author}
-    가능한 ISDS 언어코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
-    중요: 응답은 반드시 아래 형식 한 줄만 출력
+
+    지침:
+    - 국가/지역명을 언어로 단순 치환하지 말 것.
+    - 불확실하면 'und'.
+
+    출력형식:
     $a=[ISDS 코드]
-    """
+    #reason=[짧게 근거 요약]
+    #signals=[잡은 단서들, 콤마로](선택)
+    """.strip()
     try:
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "도서 정보를 바탕으로 본문 언어를 판단하는 사서 AI입니다."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "system","content":"사서용 본문 언어 추정기"},
+                      {"role":"user","content":prompt}],
             temperature=0
         )
-        content = (response.choices[0].message.content or "").strip()
-        if content.startswith("$a="):
-            code = content.replace("$a=", "").strip()
-            return code if code in ALLOWED_CODES else "und"
-        return "und"
+        content = (resp.choices[0].message.content or "").strip()
+        code, reason, signals = _extract_code_and_reason(content, "$a")
+        if code not in ALLOWED_CODES:
+            code = "und"
+        st.write(f"🧭 [GPT 근거] $a={code}")
+        if reason: st.write(f"🧭 [이유] {reason}")
+        if signals: st.write(f"🧭 [단서] {signals}")
+        return code
     except Exception as e:
         st.error(f"GPT 오류: {e}")
         return "und"
 
 # ===== GPT 판단 함수 (신규) — 저자 기반 원서 언어 추정 =====
 def gpt_guess_original_lang_by_author(author, title="", category="", publisher=""):
-    """
-    원제가 없거나 애매할 때, 저자명(국적/활동 지역/주 사용 언어)을 근거로 $h 추정.
-    - 저자명이 다수일 경우 주 저자(첫 번째)를 우선.
-    - 허용 코드 외 응답은 'und'.
-    """
     prompt = f"""
-    아래 도서의 저자 정보를 기반으로, 원서 언어(041 $h)로 가장 가능성 높은 ISDS 코드를 추정해줘.
-    저자의 국적/활동 국가/주로 집필하는 언어를 고려하되, 추정 근거는 내부적으로만 사용하고 결과는 코드만 출력해.
+    저자 정보를 중심으로 원서 언어(041 $h)를 ISDS 코드로 추정.
+    가능한 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
+
+    입력:
     - 저자: {author}
     - (참고) 제목: {title}
     - (참고) 분류: {category}
     - (참고) 출판사: {publisher}
-    가능한 ISDS 언어코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
-    중요: 응답은 반드시 아래 형식 한 줄만 출력
+
+    지침:
+    - 저자 국적·주 집필 언어·대표 작품 원어를 우선.
+    - 국가=언어 단순 치환 금지.
+    - 불확실하면 'und'.
+
+    출력형식:
     $h=[ISDS 코드]
-    """
+    #reason=[짧게 근거 요약]
+    #signals=[잡은 단서들, 콤마로](선택)
+    """.strip()
     try:
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "저자 정보를 바탕으로 원서 언어를 추정하는 사서 AI입니다."},
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role":"system","content":"저자 기반 원서 언어 추정기"},
+                      {"role":"user","content":prompt}],
             temperature=0
         )
-        content = (response.choices[0].message.content or "").strip()
-        if content.startswith("$h="):
-            code = content.replace("$h=", "").strip()
-            return code if code in ALLOWED_CODES else "und"
-        return "und"
+        content = (resp.choices[0].message.content or "").strip()
+        code, reason, signals = _extract_code_and_reason(content, "$h")
+        if code not in ALLOWED_CODES:
+            code = "und"
+        st.write(f"🧭 [저자기반 근거] $h={code}")
+        if reason: st.write(f"🧭 [이유] {reason}")
+        if signals: st.write(f"🧭 [단서] {signals}")
+        return code
     except Exception as e:
         st.error(f"GPT(저자기반) 오류: {e}")
         return "und"
@@ -204,15 +243,18 @@ def is_literature_category(category_text: str) -> bool:
     return has_kw_token(tokens, ko_hits) or has_kw_token(tokens, en_hits)
 
 def is_nonfiction_override(category_text: str) -> bool:
+    """
+    문학처럼 보여도 '역사/지역/전기/사회과학/에세이' 등 비문학 지표가 있으면 비문학으로 강제.
+    단, 문학 최상위(소설/시/희곡)면 '과학/기술'은 제외(SF 보호).
+    """
     tokens = tokenize_category(category_text or "")
     lit_top = is_literature_top(category_text or "")
 
-    # 엄격 비문학 키워드 (항상 오버라이드)
     ko_nf_strict = ["역사","근현대사","서양사","유럽사","전기","평전",
                     "사회","정치","철학","경제","경영","인문","에세이","수필"]
     en_nf_strict = ["history","biography","memoir","politics","philosophy",
                     "economics","science","technology","nonfiction","essay","essays"]
-    # 과학/기술: 문학 최상위일 때는 제외(SF 보호)
+
     sci_keys = ["과학","기술"]; sci_keys_en = ["science","technology"]
 
     k = trigger_kw_token(tokens, ko_nf_strict) or trigger_kw_token(tokens, en_nf_strict)
@@ -277,7 +319,23 @@ def crawl_aladin_fallback(isbn13):
         st.error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
-# ===== $h 우선순위 결정 (저자 기반 보정 포함) =====
+# ===== 결과 조정(충돌 해소) =====
+def reconcile_language(candidate, fallback_hint=None, author_hint=None):
+    """
+    candidate: 1차 GPT 결과
+    fallback_hint: 카테고리/원제 규칙에서 얻은 힌트(예: 'ger')
+    author_hint: 저자 기반 GPT 결과
+    """
+    if author_hint and author_hint != "und" and author_hint != candidate:
+        st.write(f"🔁 [조정] 저자기반({author_hint}) ≠ 1차({candidate}) → 저자기반 우선")
+        return author_hint
+    if fallback_hint and fallback_hint != "und" and fallback_hint != candidate:
+        if candidate in {"ita","fre","spa","por"}:
+            st.write(f"🔁 [조정] 규칙힌트({fallback_hint}) vs 1차({candidate}) → 규칙힌트 우선")
+            return fallback_hint
+    return candidate
+
+# ===== $h 우선순위 결정 (저자 기반 보정 + 근거 로깅 포함) =====
 def determine_h_language(
     title: str,
     original_title: str,
@@ -289,7 +347,6 @@ def determine_h_language(
     """
     문학: 카테고리/웹 → (부족시) GPT → (여전히 불확실) 저자 기반 보정
     비문학: GPT → (부족시) 카테고리/웹 → (여전히 불확실) 저자 기반 보정
-    ※ 원제가 없거나 애매할 때 저자 기반 보정을 적극 활용.
     """
     lit_raw = is_literature_category(category_text)
     nf_override = is_nonfiction_override(category_text)
@@ -307,9 +364,10 @@ def determine_h_language(
 
     rule_from_original = detect_language(original_title) if original_title else "und"
     lang_h = None
+    author_hint = None
 
     if is_lit_final:
-        # 1) 카테고리/웹 → 2) 원제 유니코드 → 3) GPT → 4) 저자 기반 보정
+        # 문학: 1) 카테고리/웹 → 2) 원제 유니코드 → 3) GPT → 4) 저자 기반
         lang_h = subject_lang or rule_from_original
         st.write(f"📘 [설명] (문학 흐름) 1차 후보: {lang_h or 'und'}")
         if not lang_h or lang_h == "und":
@@ -318,24 +376,25 @@ def determine_h_language(
             st.write(f"📘 [설명] (문학 흐름) GPT 결과: {lang_h}")
         if (not lang_h or lang_h == "und") and author:
             st.write("📘 [설명] (문학 흐름) 원제 없음/애매 → 저자 기반 보정 시도…")
-            lang_h_author = gpt_guess_original_lang_by_author(author, title, category_text, publisher)
-            st.write(f"📘 [설명] (문학 흐름) 저자 기반 결과: {lang_h_author}")
-            if lang_h_author in ALLOWED_CODES:
-                lang_h = lang_h_author
+            author_hint = gpt_guess_original_lang_by_author(author, title, category_text, publisher)
+            st.write(f"📘 [설명] (문학 흐름) 저자 기반 결과: {author_hint}")
     else:
-        # 비문학: 1) GPT → 2) 카테고리/웹 → 3) 원제 유니코드 → 4) 저자 기반 보정
+        # 비문학: 1) GPT → 2) 카테고리/웹 → 3) 원제 유니코드 → 4) 저자 기반
         st.write("📘 [설명] (비문학 흐름) GPT 선행 판단…")
         lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
         st.write(f"📘 [설명] (비문학 흐름) GPT 결과: {lang_h or 'und'}")
         if not lang_h or lang_h == "und":
             lang_h = subject_lang or rule_from_original
             st.write(f"📘 [설명] (비문학 흐름) 보조 규칙 적용 → 후보: {lang_h or 'und'}")
-        if (not lang_h or lang_h == "und") and author:
+        if author and (not lang_h or lang_h == "und"):
             st.write("📘 [설명] (비문학 흐름) 원제 없음/애매 → 저자 기반 보정 시도…")
-            lang_h_author = gpt_guess_original_lang_by_author(author, title, category_text, publisher)
-            st.write(f"📘 [설명] (비문학 흐름) 저자 기반 결과: {lang_h_author}")
-            if lang_h_author in ALLOWED_CODES:
-                lang_h = lang_h_author
+            author_hint = gpt_guess_original_lang_by_author(author, title, category_text, publisher)
+            st.write(f"📘 [설명] (비문학 흐름) 저자 기반 결과: {author_hint}")
+
+    # 충돌 조정
+    fallback_hint = subject_lang or rule_from_original
+    lang_h = reconcile_language(candidate=lang_h, fallback_hint=fallback_hint, author_hint=author_hint)
+    st.write("📘 [결과] 조정 후 원서 언어(h) =", lang_h)
 
     return (lang_h if lang_h in ALLOWED_CODES else "und") or "und"
 
@@ -383,7 +442,7 @@ def get_kormarc_tags(isbn):
             if gpt_a != 'und':
                 lang_a = gpt_a
 
-        # ---- $h: 원저 언어 (저자 기반 보정 포함) ----
+        # ---- $h: 원저 언어 (저자 기반 보정 & 근거 로깅 포함) ----
         st.write("📘 [DEBUG] 원제 감지됨:", bool(original_title), "| 원제:", original_title or "(없음)")
         st.write("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang or "(없음)")
         lang_h = determine_h_language(
@@ -408,7 +467,7 @@ def get_kormarc_tags(isbn):
         return f"📕 예외 발생: {e}", "", ""
 
 # ===== Streamlit UI =====
-st.title("📘 KORMARC 041/546 태그 생성기 (저자 기반 보정 포함)")
+st.title("📘 KORMARC 041/546 태그 생성기 (저자 보정 + 근거 로깅 통합본)")
 
 isbn_input = st.text_input("ISBN을 입력하세요 (13자리):")
 if st.button("태그 생성"):
