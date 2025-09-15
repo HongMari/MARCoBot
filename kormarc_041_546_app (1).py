@@ -284,7 +284,7 @@ def generate_546_from_041_kormarc(marc_041):
         a_lang = ISDS_LANGUAGE_CODES.get(a_codes[0], "알 수 없음")
         if h_code:
             h_lang = ISDS_LANGUAGE_CODES.get(h_code, "알 수 없음")
-            return f"{a_lang}로 씀, 원저는 {h_lang}임"
+            return f"{h_lang}원작을 {a_lang}로 번역"
         else:
             return f"{a_lang}로 씀"
     elif len(a_codes) > 1:
@@ -483,3 +483,4 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
+
