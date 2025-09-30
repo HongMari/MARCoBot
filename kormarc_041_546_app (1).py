@@ -77,7 +77,7 @@ def gpt_guess_original_lang(title, category, publisher, author="", original_titl
         st.error(f"GPT 오류: {e}")
         return "und"
 
-# ===== GPT 판단 함수 (본문) — 수정: author 제거 + 강한 가드 명시 =====
+# ===== GPT 판단 함수 (본문) =====
 def gpt_guess_main_lang(title, category, publisher):
     prompt = f"""
     아래 도서의 본문 언어(041 $a)를 ISDS 코드로 추정.
@@ -437,26 +437,25 @@ def get_kormarc_tags(isbn):
         subject_lang = crawl.get("subject_lang")
         category_text = crawl.get("category_text", "")
 
-        # ---- $a: 본문 언어 ----
+        # ---- $a: 본문 언어 (요청한 순서로 재정렬) ----
+        # 1) 규칙 기반 1차 감지
+        lang_a = detect_language(title)
+        st.write("📘 [DEBUG] 규칙 기반 1차 lang_a =", lang_a)
+
+        # 2) 강한 가드: '국내도서'면 kor로 고정
         if is_domestic_category(category_text):
+            st.write("📘 [판정] 카테고리에 '국내도서' 감지 → $a=kor(강한 가드)")
             lang_a = "kor"
-            st.write("📘 [판정] 카테고리에 '국내도서' 감지 → $a=kor")
-        elif HANGUL_RE.search(title or ""):
-            lang_a = "kor"
-            st.write("📘 [판정] 제목에서 한글 감지 → $a=kor")
-        else:
-            # 규칙 기반 1차
-            lang_a = detect_language(title)
-            st.write("📘 [DEBUG] 규칙 기반 초깃값 lang_a =", lang_a)
-            # GPT 보조 (애매할 때만)
-            if lang_a in ('und', 'eng'):
-                st.write("📘 [설명] 제목만으로 애매 → GPT에 본문 언어 질의…")
-                gpt_a = gpt_guess_main_lang(title, category_text, publisher)  # author 제거
-                st.write(f"📘 [설명] GPT 판단 lang_a = {gpt_a}")
-                if gpt_a in ALLOWED_CODES:
-                    lang_a = gpt_a
-                else:
-                    lang_a = "und"
+
+        # 3) GPT 보조: und/eng일 때만 호출
+        if lang_a in ('und', 'eng'):
+            st.write("📘 [설명] und/eng → GPT 보조로 본문 언어 재판정…")
+            gpt_a = gpt_guess_main_lang(title, category_text, publisher)
+            st.write(f"📘 [설명] GPT 판단 lang_a = {gpt_a}")
+            if gpt_a in ALLOWED_CODES:
+                lang_a = gpt_a
+            else:
+                lang_a = "und"
 
         # ---- $h: 원저 언어 (저자 기반 보정 & 근거 로깅 포함) ----
         st.write("📘 [DEBUG] 원제 감지됨:", bool(original_title), "| 원제:", original_title or "(없음)")
