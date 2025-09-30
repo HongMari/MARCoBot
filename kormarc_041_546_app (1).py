@@ -77,8 +77,8 @@ def gpt_guess_original_lang(title, category, publisher, author="", original_titl
         st.error(f"GPT 오류: {e}")
         return "und"
 
-# ===== GPT 판단 함수 (본문) =====
-def gpt_guess_main_lang(title, category, publisher, author=""):
+# ===== GPT 판단 함수 (본문) — 수정: author 제거 + 강한 가드 명시 =====
+def gpt_guess_main_lang(title, category, publisher):
     prompt = f"""
     아래 도서의 본문 언어(041 $a)를 ISDS 코드로 추정.
     가능한 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
@@ -87,11 +87,12 @@ def gpt_guess_main_lang(title, category, publisher, author=""):
     - 제목: {title}
     - 분류: {category}
     - 출판사: {publisher}
-    - 저자: {author}
 
     지침:
-    - 국가/지역명을 언어로 단순 치환하지 말 것.
-    - 불확실하면 'und'.
+    - '본문 언어'는 이 자료의 **현시본(Manifestation)** 언어다.
+    - 저자 국적, 원작 언어, 시리즈 원산지 등 **원작 관련 단서 사용 금지**.
+    - 카테고리에 '국내도서'가 있거나, 제목에 **한글이 1자라도** 포함되면 반드시 kor.
+    - 허용 코드 밖이거나 불확실하면 'und'.
 
     출력형식:
     $a=[ISDS 코드]
@@ -398,6 +399,10 @@ def determine_h_language(
 
     return (lang_h if lang_h in ALLOWED_CODES else "und") or "und"
 
+# ===== 국내도서 여부 가드 =====
+def is_domestic_category(category_text: str) -> bool:
+    return "국내도서" in (category_text or "")
+
 # ===== KORMARC 태그 생성기 =====
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
@@ -433,14 +438,25 @@ def get_kormarc_tags(isbn):
         category_text = crawl.get("category_text", "")
 
         # ---- $a: 본문 언어 ----
-        lang_a = detect_language(title)
-        st.write("📘 [DEBUG] 제목 기반 초깃값 lang_a =", lang_a)
-        if lang_a in ['und', 'eng']:
-            st.write("📘 [설명] 제목만으로 애매 → GPT에 본문 언어 질의…")
-            gpt_a = gpt_guess_main_lang(title, category_text, publisher, author)
-            st.write(f"📘 [설명] GPT 판단 lang_a = {gpt_a}")
-            if gpt_a != 'und':
-                lang_a = gpt_a
+        if is_domestic_category(category_text):
+            lang_a = "kor"
+            st.write("📘 [판정] 카테고리에 '국내도서' 감지 → $a=kor")
+        elif HANGUL_RE.search(title or ""):
+            lang_a = "kor"
+            st.write("📘 [판정] 제목에서 한글 감지 → $a=kor")
+        else:
+            # 규칙 기반 1차
+            lang_a = detect_language(title)
+            st.write("📘 [DEBUG] 규칙 기반 초깃값 lang_a =", lang_a)
+            # GPT 보조 (애매할 때만)
+            if lang_a in ('und', 'eng'):
+                st.write("📘 [설명] 제목만으로 애매 → GPT에 본문 언어 질의…")
+                gpt_a = gpt_guess_main_lang(title, category_text, publisher)  # author 제거
+                st.write(f"📘 [설명] GPT 판단 lang_a = {gpt_a}")
+                if gpt_a in ALLOWED_CODES:
+                    lang_a = gpt_a
+                else:
+                    lang_a = "und"
 
         # ---- $h: 원저 언어 (저자 기반 보정 & 근거 로깅 포함) ----
         st.write("📘 [DEBUG] 원제 감지됨:", bool(original_title), "| 원제:", original_title or "(없음)")
@@ -483,4 +499,3 @@ if st.button("태그 생성"):
             st.error(f"⚠️ 오류 발생: {e}")
     else:
         st.warning("ISBN을 입력해주세요.")
-
