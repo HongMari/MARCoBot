@@ -565,7 +565,7 @@ def _as_mrk_546(tag_546_text: str | None) -> str | None:
         return t
     if t.startswith("$a"):
         return f"=546  \\\\{t}"
-    return f"=546  \\\\$a{t}
+    return f"=546  \\\\$a{t}"
 
 # =========================
 # 저자 서명 필드 관련                   
