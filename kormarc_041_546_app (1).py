@@ -375,7 +375,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # ------------------------------------------------------
 # 알라딘 ItemLookUp (API)
 # ------------------------------------------------------
-def aladin_lookup_by_api(isbn13: str, ttbkey: str) -> BookInfo | None:
+def aladin_lookup_by_api(isbn13: str, ttbkey: str) -> "BookInfo | None":
     if not ttbkey:
         return None
 
@@ -1073,6 +1073,18 @@ def _parse_653_keywords(tag_653: str | None):
         if p:
             out.append(p)
     return out
+
+class BookInfo:
+    title: str = ""
+    author: str = ""
+    pub_date: str = ""
+    publisher: str = ""
+    isbn13: str = ""
+    category: str = ""
+    description: str = ""
+    toc: str = ""
+    extra: Optional[Dict[str, Any]] = None
+
 # ============================================
 # PART 6 — 056(KDC) 자동분류 생성기 (GPT 1회 호출)
 # ============================================
@@ -1949,4 +1961,5 @@ if submitted:
         file_name="marc_output_all.mrc",
         mime="application/octet-stream",
     )
+
 
