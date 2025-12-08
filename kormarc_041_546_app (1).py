@@ -396,7 +396,6 @@ def build_260(place_display: str, publisher_name: str, pubyear: str):
 # 기존 build_300_from_aladin_detail(item)를 그대로 재사용.
 # 이 함수는 Part 3에 다시 등장할 예정이며,
 # GPT master 구조와 충돌하지 않음.
-
 # ============================================================
 # Part 3 — 245 / 246 / 700 / 90010 / 049 빌더
 # GPT master 이후 구조와 호환되는 재작성 버전
@@ -607,8 +606,6 @@ def build_049(reg_mark: str, reg_no: str, copy_symbol: str) -> str:
         parts.append(f"$d{copy_symbol}")
 
     return "=049  \\\\" + "".join(parts)
-
-
 # ============================================================
 # Part 4 — 008 / 발행지 / KPIPA / 형태사항(300) / 가격 / 020
 # ============================================================
@@ -774,7 +771,6 @@ def _build_020_from_item_and_nlk(isbn: str, item: dict) -> str:
         return f"=020  \\\\$a{isbn13} :$c{price}"
     else:
         return f"=020  \\\\$a{isbn13}"
-
 # ============================================================
 # Part 5 — generate_all_oneclick (GPT 1회 호출 버전)
 # ============================================================
@@ -1001,7 +997,232 @@ def generate_all_oneclick(
     marc_bytes = marc_rec.as_marc()
 
     return marc_rec, marc_bytes, mrk_text, meta
+# ============================================================
+# Part 5 — generate_all_oneclick (GPT 1회 호출 버전)
+# ============================================================
 
+def generate_all_oneclick(
+    isbn: str,
+    reg_mark: str = "",
+    reg_no: str = "",
+    copy_symbol: str = "",
+    use_ai_940: bool = True
+):
+    """
+    GPT-4o 단일 호출 기반 완전 리팩터링 버전.
+    기존 generate_all_oneclick 논리를 동일하게 수행하되,
+    GPT 호출은 오직 1회만 실행된다.
+    """
+
+    # Reset debug lines
+    global CURRENT_DEBUG_LINES
+    CURRENT_DEBUG_LINES = []
+
+    # --------------------------------------------------------
+    # 1) 기본 준비
+    # --------------------------------------------------------
+    isbn = normalize_isbn(isbn)
+    aladin_item = fetch_aladin_item_raw(isbn)
+    author_raw, _ = fetch_nlk_author_only(isbn)
+
+    # --------------------------------------------------------
+    # 2) GPT Master 호출 (단 1회)
+    # --------------------------------------------------------
+    master_payload = build_gpt_master_payload(isbn, aladin_item)
+    gpt_result = call_gpt_master(master_payload)
+
+    marc041_raw = gpt_result.get("marc041")
+    marc546_text = gpt_result.get("marc546")
+    keywords_653 = gpt_result.get("keywords_653", [])
+    kdc_056 = gpt_result.get("kdc_056")
+    title940_raw = gpt_result.get("title940")
+
+    dbg("[GPT result]", json.dumps(gpt_result, ensure_ascii=False))
+
+    # --------------------------------------------------------
+    # 3) GPT 결과 → KORMARC 후처리 변환
+    # --------------------------------------------------------
+    tag_041_text = make_041(marc041_raw)
+    tag_546_text = make_546(marc546_text)
+    tag_653 = make_653(keywords_653)
+    tag_056 = make_056(kdc_056)
+    tag_940_list = make_940(title940_raw) if use_ai_940 else []
+
+    # 언어코드 추출 (700 정렬용)
+    origin_lang = None
+    if marc041_raw:
+        m = re.search(r"\$h([a-z]{3})", marc041_raw, re.IGNORECASE)
+        if m:
+            origin_lang = m.group(1).lower()
+
+    # --------------------------------------------------------
+    # 4) MARC 필드 생성
+    # --------------------------------------------------------
+    marc_rec = Record(to_unicode=True, force_utf8=True)
+    pieces = []   # (Field, mrk_string) 리스트
+
+    # ----- 245 / 246 / 700 -----
+    marc245 = build_245_with_people_from_sources(aladin_item, author_raw, prefer="aladin")
+    f_245 = mrk_str_to_field(marc245)
+
+    marc246 = build_246_from_aladin_item(aladin_item)
+    f_246 = mrk_str_to_field(marc246)
+
+    mrk_700_list = build_700_people_pref_aladin(
+        author_raw, aladin_item, origin_lang_code=origin_lang
+    )
+
+    # ----- 90010 (Wikidata LOD) -----
+    people = extract_people_from_aladin(aladin_item)
+    mrk_90010 = build_90010_from_wikidata(people, include_translator=False)
+
+    # ----- 260 -----
+    publisher_raw = aladin_item.get("publisher", "") if aladin_item else ""
+    pubdate = aladin_item.get("pubDate", "") if aladin_item else ""
+    pubyear = pubdate[:4] if pubdate and len(pubdate) >= 4 else ""
+
+    bundle = build_pub_location_bundle(isbn, publisher_raw)
+    tag_260 = build_260(
+        place_display=bundle["place_display"],
+        publisher_name=publisher_raw,
+        pubyear=pubyear,
+    )
+    f_260 = mrk_str_to_field(tag_260)
+
+    # ----- 008 -----
+    lang3_override = None
+    if marc041_raw:
+        m = re.search(r"\$a([a-z]{3})", marc041_raw, re.IGNORECASE)
+        if m:
+            lang3_override = m.group(1).lower()
+
+    data_008 = build_008_from_isbn(
+        isbn,
+        aladin_pubdate=pubdate,
+        aladin_title=aladin_item.get("title", ""),
+        aladin_category=aladin_item.get("categoryName", ""),
+        aladin_desc=aladin_item.get("description", ""),
+        aladin_toc=(aladin_item.get("subInfo") or {}).get("toc", ""),
+        override_country3=bundle["country_code"],
+        override_lang3=lang3_override,
+        cataloging_src="a",
+    )
+    field_008 = Field(tag="008", data=data_008)
+
+    # ----- 020 -----
+    tag_020 = _build_020_from_item_and_nlk(isbn, aladin_item)
+    f_020 = mrk_str_to_field(tag_020)
+
+    # ----- 추가 020 (set_isbn) -----
+    nlk_extra = fetch_additional_code_from_nlk(isbn)
+    set_isbn = (nlk_extra.get("set_isbn") or "").strip()
+
+    # ----- 300 -----
+    tag_300, f_300 = build_300_from_aladin_detail(aladin_item)
+
+    # ----- 490 / 830 -----
+    tag_490, tag_830 = build_490_830_mrk_from_item(aladin_item)
+    f_490 = mrk_str_to_field(tag_490)
+    f_830 = mrk_str_to_field(tag_830)
+
+    # ----- 950 -----
+    tag_950 = build_950_from_item_and_price(aladin_item, isbn)
+    f_950 = mrk_str_to_field(tag_950)
+
+    # ----- 049 -----
+    tag_049 = build_049(reg_mark, reg_no, copy_symbol)
+    f_049 = mrk_str_to_field(tag_049)
+
+    # --------------------------------------------------------
+    # 5) pieces[] 순서대로 조립
+    # --------------------------------------------------------
+
+    # 008
+    pieces.append((field_008, f"=008  {data_008}"))
+
+    # 020
+    if f_020: pieces.append((f_020, tag_020))
+
+    # 0201 (set ISBN)
+    if set_isbn:
+        tag_020_1 = f"=020  1\\$a{set_isbn} (set)"
+        f_020_1 = mrk_str_to_field(tag_020_1)
+        pieces.append((f_020_1, tag_020_1))
+
+    # 041 / 546 / 056 / 653 / 940
+    if tag_041_text:
+        f_041 = mrk_str_to_field(tag_041_text)
+        if f_041: pieces.append((f_041, tag_041_text))
+
+    if tag_546_text:
+        f_546 = mrk_str_to_field(tag_546_text)
+        if f_546: pieces.append((f_546, tag_546_text))
+
+    if tag_056:
+        f_056 = mrk_str_to_field(tag_056)
+        if f_056: pieces.append((f_056, tag_056))
+
+    if tag_653:
+        f_653 = mrk_str_to_field(tag_653)
+        if f_653: pieces.append((f_653, tag_653))
+
+    for mrk in tag_940_list or []:
+        f_940 = mrk_str_to_field(mrk)
+        if f_940: pieces.append((f_940, mrk))
+
+    # 245 / 246 / 260 / 300 / 490 / 830 / 950 / 049
+    if f_245: pieces.append((f_245, marc245))
+    if f_246: pieces.append((f_246, marc246))
+    if f_260: pieces.append((f_260, tag_260))
+    if f_300: pieces.append((f_300, tag_300))
+    if f_490: pieces.append((f_490, tag_490))
+    if f_830: pieces.append((f_830, tag_830))
+    if f_950: pieces.append((f_950, tag_950))
+    if f_049: pieces.append((f_049, tag_049))
+
+    # ----- 700 -----
+    for m in mrk_700_list:
+        f = mrk_str_to_field(m)
+        if f: pieces.append((f, m))
+
+    # ----- 90010 -----
+    for m in mrk_90010:
+        f = mrk_str_to_field(m)
+        if f: pieces.append((f, m))
+
+    # --------------------------------------------------------
+    # 6) MARC Record 객체에 add_field
+    # --------------------------------------------------------
+    for f, _ in pieces:
+        marc_rec.add_field(f)
+
+    # --------------------------------------------------------
+    # 7) MRK 전체 텍스트 조합
+    # --------------------------------------------------------
+    mrk_text = "\n".join(m for _, m in pieces)
+
+    # --------------------------------------------------------
+    # 8) 메타 정보 구성
+    # --------------------------------------------------------
+    meta = {
+        "isbn": isbn,
+        "title": aladin_item.get("title"),
+        "publisher": publisher_raw,
+        "pubyear": pubyear,
+        "041": tag_041_text,
+        "546": tag_546_text,
+        "056": tag_056,
+        "653": tag_653,
+        "940": tag_940_list,
+        "kdc_code": kdc_056,
+        "Candidates": [],   # 700 후보자 표시 원하면 추가 가능
+        "debug_lines": list(CURRENT_DEBUG_LINES),
+        "provenance_90010": LAST_PROV_90010,
+    }
+
+    marc_bytes = marc_rec.as_marc()
+
+    return marc_rec, marc_bytes, mrk_text, meta
 # ============================================================
 # Part 6 — run_and_export + Streamlit UI 전체
 # ============================================================
@@ -1213,7 +1434,144 @@ with st.expander("⚙️ 사용 팁"):
         - 모든 MARC는 MRK/MRC로 다운로드 가능
         """
     )
+# ============================================================
+# Part 7 — 보조 유틸리티 / CSV 로더 / record→MRK 변환기 / Appendix
+# ============================================================
 
 
+# ------------------------------------------------------------
+# CSV 업로드 로더 (원본 유지)
+# ------------------------------------------------------------
+def load_uploaded_csv(file):
+    """
+    업로드된 CSV 파일을 UTF-8로 읽어서 DataFrame 반환
+    """
+    return pd.read_csv(file, encoding="utf-8")
 
 
+# ------------------------------------------------------------
+# record_to_mrk_from_record — 원본 유지
+# ------------------------------------------------------------
+def record_to_mrk_from_record(rec: Record) -> str:
+    """
+    Record 객체를 MRK 텍스트로 변환
+    """
+    lines = []
+
+    # Leader
+    leader = rec.leader.decode("utf-8") if isinstance(rec.leader, (bytes, bytearray)) else str(rec.leader)
+    lines.append("=LDR  " + leader)
+
+    for f in rec.get_fields():
+        tag = f.tag
+
+        # --- Control fields ---
+        if tag.isdigit() and int(tag) < 10:
+            lines.append(f"={tag}  " + (f.data or ""))
+            continue
+
+        # --- Data fields ---
+        ind1 = (f.indicators[0] if getattr(f, "indicators", None) else " ") or " "
+        ind2 = (f.indicators[1] if getattr(f, "indicators", None) else " ") or " "
+
+        # 화면에서 공백을 '\'로 보이게
+        ind1_disp = "\\" if ind1 == " " else ind1
+        ind2_disp = "\\" if ind2 == " " else ind2
+
+        subs = getattr(f, "subfields", None)
+        parts = ""
+
+        # pymarc의 Subfield 객체 배열
+        if isinstance(subs, list) and subs and isinstance(subs[0], Subfield):
+            for s in subs:
+                parts += f"${s.code}{s.value}"
+
+        # 구형 배열 ([code, value, ...])
+        elif isinstance(subs, list):
+            try:
+                it = iter(subs)
+                for code, val in zip(it, it):
+                    parts += f"${code}{val}"
+            except Exception:
+                pass
+
+        # 최후 폴백
+        else:
+            try:
+                for s in f:
+                    parts += f"${s.code}{s.value}"
+            except Exception:
+                pass
+
+        lines.append(f"={tag}  {ind1_disp}{ind2_disp}{parts}")
+
+    return "\n".join(lines)
+
+
+# ------------------------------------------------------------
+# fetch_nlk_author_only — 기존 함수 일부 단순 버전
+# ------------------------------------------------------------
+def fetch_nlk_author_only(isbn: str):
+    """
+    국립중앙도서관 SearchAPI 단순 버전.
+    원본 코드에서는 JSON을 파싱하여 AUTHOR 계열 필드만 가져옴.
+    여기서는 예외 생겨도 빈 값 반환하도록 안정화.
+    """
+    try:
+        url = f"http://seoji.nl.go.kr/landingPage/SearchApi.do"
+        params = {"cert_key": NLK_CERT_KEY, "result_style": "json", "page_no": 1, "page_size": 1, "isbn": isbn}
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        js = r.json()
+        docs = js.get("docs") or []
+        if not docs:
+            return "", None
+
+        # AUTHOR 필드 추출 (단순화)
+        raw = docs[0].get("AUTHOR", "")
+        return raw, docs[0]
+    except Exception as e:
+        dbg_err(f"[NLK Author fail] {e}")
+        return "", None
+
+
+# ------------------------------------------------------------
+# fetch_additional_code_from_nlk — set ISBN 정보만 필요
+# ------------------------------------------------------------
+def fetch_additional_code_from_nlk(isbn: str) -> dict:
+    """
+    NLK API를 재사용하여 set_isbn 정보만 추출.
+    원본 구조를 단순화한 버전.
+    """
+    out = {"set_isbn": ""}
+    try:
+        url = f"http://seoji.nl.go.kr/landingPage/SearchApi.do"
+        params = {"cert_key": NLK_CERT_KEY, "result_style": "json", "page_no": 1, "page_size": 1, "isbn": isbn}
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        js = r.json()
+        docs = js.get("docs") or []
+        if not docs:
+            return out
+
+        set_isbn = docs[0].get("SET_ISBN", "")
+        out["set_isbn"] = set_isbn.strip()
+        return out
+    except Exception as e:
+        dbg_err(f"[NLK set_isbn fail] {e}")
+        return out
+
+
+# ------------------------------------------------------------
+# fetch_aladin_item_raw — 이미 Part 1에 정의됨
+# ------------------------------------------------------------
+
+
+# ------------------------------------------------------------
+# 마지막 Appendix — 환경 안내
+# ------------------------------------------------------------
+if __name__ == "__main__":
+    print("\n======================================")
+    print(" GPT-4o 단일 호출 KORMARC 생성기 (완성본) ")
+    print(" Streamlit 환경에서 실행하세요:  streamlit run this_file.py ")
+    print("======================================\n")
