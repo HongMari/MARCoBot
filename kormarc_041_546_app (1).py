@@ -375,7 +375,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 # ------------------------------------------------------
 # 알라딘 ItemLookUp (API)
 # ------------------------------------------------------
-def aladin_lookup_by_api(isbn13: str, ttbkey: str) -> dataclass | None:
+def aladin_lookup_by_api(isbn13: str, ttbkey: str) -> BookInfo | None:
     if not ttbkey:
         return None
 
@@ -1949,3 +1949,4 @@ if submitted:
         file_name="marc_output_all.mrc",
         mime="application/octet-stream",
     )
+
