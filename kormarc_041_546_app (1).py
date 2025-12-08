@@ -4952,19 +4952,6 @@ def generate_all_oneclick(
 
     return marc_rec, marc_bytes, "\n".join(mrk_strings), meta
 
-    """
-    PATCH 2 적용본: 041, 546, 653, 056을 GPT 한 번에 생성
-    기존 스타일/조립 순서는 100% 유지
-    """
-    mb = MarcBuilder()
-    marc_rec = Record(to_unicode=True, force_utf8=True)
-    meta = {"sources": {}, "notes": [], "provenance": {}}
-
-    global CURRENT_DEBUG_LINES
-    CURRENT_DEBUG_LINES = []
-
-    pieces = []
-
     # -------------------------------
     # ① 원본 데이터 준비
     # -------------------------------
