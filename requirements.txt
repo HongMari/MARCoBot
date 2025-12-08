@@ -1,6 +1,9 @@
 streamlit
-requests
-python-dotenv
 openai
 beautifulsoup4
+requests
+pandas
+python-dotenv
 gspread
+oauth2client
+pymarc
