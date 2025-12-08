@@ -30,186 +30,6 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from pymarc import Record, Field, MARCWriter, Subfield           #✅ mrc 다운로드를 위해 requirements에 pymarc 추가해야함
 
-# ============================================================
-# 🔥 통합 GPT 호출 (gpt-4o)
-#    041 / 546 / 653 / 056 을 한 번에 생성
-# ============================================================
-
-def call_gpt_master(book):
-    """
-    PATCH2: GPT 1회 호출로 041 / 546 / 653 / 056을 모두 생성.
-    너의 기존 규칙 100% 동일하게 적용되도록 프롬프트 설계됨.
-    """
-
-    system_msg = """
-    너는 대한민국 공공도서관의 KORMARC 편목 사서이다.
-    아래 도서 정보를 기반으로 다음 필드를 모두 생성한다.
-
-    반드시 다음 JSON 스키마로만 출력해야 한다:
-
-    {
-        "041": {"a": "<본문언어3자리>", "h": "<원작언어3자리 또는 null>"},
-        "546": "<언어주기 문장 또는 null>",
-        "653": ["키워드1","키워드2",... 최대 7개],
-        "056": "<KDC 3자리 정수 또는 '직접분류추천'>"
-    }
-
-    ### 041 규칙
-    - 네 기존 코드의 detect_language + 국내도서 강한 가드 규칙을 반영.
-    - 번역서가 아닐 경우 h는 null.
-    - 언어 코드는 반드시 kor, eng, jpn, chi 같은 3자리.
-
-    ### 546 규칙
-    - 번역서일 경우 "<원어> 원작을 <번역언어>로 번역"
-    - 비번역서는 null
-
-    ### 653 규칙
-    - 너의 기존 generate_653_with_gpt 규칙을 그대로 따라야 한다.
-    - 금칙어, 구체명사, 붙여쓰기, 최대 7개.
-    - ["정서조절","감정관리","자기계발"] 이런 형태.
-
-    ### 056 규칙 (KDC)
-    - 소수점 없이 3자리 정수 (예: 813, 320, 005)
-    - 확신이 없으면 "직접분류추천"
-    - 문학일 경우 언어 기반 재배치 규칙은 적용하지 않고 숫자만 생성.
-      (재배치는 너의 파이프라인 내부에서 수행됨)
-
-    ### 절대 금지
-    - JSON 밖의 텍스트 출력 금지
-    - 설명, 생각 과정, 말투, 감탄사 금지
-
-    """
-
-    user_msg = f"""
-    입력 도서 정보는 다음과 같다:
-
-    {json.dumps(book, ensure_ascii=False, indent=2)}
-
-    위 정보를 기반으로 정확하게 JSON만 출력하라.
-    """
-
-    # GPT 호출
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role":"system","content":system_msg},
-            {"role":"user","content":user_msg}
-        ],
-        temperature=0.0,
-        max_tokens=200
-    )
-
-    raw = resp.choices[0].message.content.strip()
-
-    try:
-        data = json.loads(raw)
-        return data
-    except Exception:
-        st.error("GPT master 응답 파싱 실패")
-        st.code(raw)
-        return {
-            "041": {"a": None, "h": None},
-            "546": None,
-            "653": [],
-            "056": "직접분류추천",
-        }
-
-def make_041(obj):
-    if not obj:
-        return None
-    a = obj.get("a")
-    h = obj.get("h")
-    if a and h:
-        return f"=041  \\\\$a{a}$h{h}"
-    elif a:
-        return f"=041  \\\\$a{a}"
-    return None
-
-
-def make_546(text):
-    if not text:
-        return None
-    return f"=546  \\\\$a{text}"
-
-
-def make_653(arr):
-    if not arr:
-        return None
-    body = "".join(f"$a{kw}" for kw in arr)
-    return f"=653  \\\\{body}"
-
-
-def make_056(code):
-    if not code:
-        return None
-    if re.fullmatch(r"\d{1,3}", code):
-        return f"=056  \\\\$a{code}$26"
-    if code == "직접분류추천":
-        return "=056  \\\\$a직접분류추천$26"
-    return None
-
-
-#041 태그 조립
-def build_marc_041_from_gpt(js):
-    """
-    js = gpt_result["041"]
-    예: { "a": ["kor"], "h": ["eng"] }
-    그대로 유지하면서 041 MARC 생성
-    """
-    a_list = js.get("a", [])
-    h_list = js.get("h", [])
-
-    if not a_list:
-        return None
-
-    parts = []
-    for a in a_list:
-        parts.append(f"$a{a}")
-
-    for h in h_list:
-        parts.append(f"$h{h}")
-
-    return "=041  0\\" + "".join(parts)
-
-#546 태그 조립
-def build_marc_546_from_gpt(txt):
-    """
-    txt = "영어 원작을 한국어로 번역"
-    기존 너의 546 스타일 유지
-    """
-    if not txt:
-        return None
-    return f"=546  \\\\$a{txt}"
-
-#653 태그 조립
-def build_marc_653_from_gpt(arr):
-    """
-    arr = ["인공지능", "머신러닝", "사서업무자동화"]
-    653  _None (ind1=\ ind2=\ ) 형태 유지
-    """
-    if not arr:
-        return None
-
-    parts = "".join(f"$a{w}" for w in arr)
-    return f"=653  \\\\{parts}"
-
-#056 태그 조립
-def build_marc_056_from_gpt(code):
-    """
-    code = "813" 또는 "직접분류추천"
-    기존 출력형태:
-    =056  \\$a813$26
-    """
-    if not code:
-        return None
-
-    # 직접분류추천
-    if code == "직접분류추천":
-        return "=056  \\\\$a직접분류추천$26"
-
-    # 숫자 3자리 유지
-    return f"=056  \\\\$a{code}$26"
-
 
 class MarcBuilder:
     def __init__(self):
@@ -356,142 +176,118 @@ ISDS_LANGUAGE_CODES = {
 }
 ALLOWED_CODES = set(ISDS_LANGUAGE_CODES.keys()) - {"und"}
 
-# ===== 공통 유틸: GPT 응답 파싱(코드 + 이유) =====
-def _extract_code_and_reason(content, code_key="$h"):
-    code, reason, signals = "und", "", ""
-    lines = [l.strip() for l in (content or "").splitlines() if l.strip()]
-    for ln in lines:
-        if ln.startswith(f"{code_key}="):
-            code = ln.split("=", 1)[1].strip()
-        elif ln.lower().startswith("#reason="):
-            reason = ln.split("=", 1)[1].strip()
-        elif ln.lower().startswith("#signals="):
-            signals = ln.split("=", 1)[1].strip()
-    return code, reason, signals
+class GptBatchResult:
+    """통합 GPT 호출의 결과를 담는 데이터 클래스"""
+    lang_a: str = "und"
+    lang_h: str = "und"
+    keywords_653: list[str] = field(default_factory=list)
 
-# ===== GPT 판단 함수 (원서; 일반) =====
-def gpt_guess_original_lang(title, category, publisher, author="", original_title=""):
+
+def _get_forbidden_list(title: str, author: str) -> list[str]:
+    """653 생성을 위해 제목, 저자에서 제외할 단어 목록 생성 (간소화된 버전)"""
+    # 제목/저자명을 구두점/슬래시 등으로 분리하여 제외어 목록 생성
+    forbidden = [t.strip() for t in re.split(r'[:/?()]+', title) if t.strip()]
+    forbidden.extend([a.strip() for a in re.split(r'[:/?()]+', author) if a.strip()])
+    return list(set(f for f in forbidden if len(f) >= 2))
+
+
+def gpt_batch_metadata_analysis(
+    title: str, 
+    original_title: str, 
+    category_text: str, 
+    publisher: str, 
+    author: str, 
+    description: str, 
+    toc: str
+) -> GptBatchResult:
+    """
+    041 $a, $h 및 653 주제어 생성을 단일 GPT 호출로 통합.
+    """
+    if not OPENAI_KEY:
+        dbg_err("OPENAI_API_KEY가 설정되지 않아 GPT 호출을 건너뜁니다.")
+        return GptBatchResult()
+        
+    # 653 생성을 위한 제외어 목록
+    forbidden_list = _get_forbidden_list(title, author)
+    
+    # $a에 대한 강한 규칙(국내도서=kor, 제목 한글=kor)을 GPT에게 명시적으로 주입
+    is_korean_title = detect_language_by_unicode(title) == 'kor'
+    domestic_guard = "kor" if is_domestic_category(category_text) or is_korean_title else "und"
+    
     prompt = f"""
-    아래 도서의 원서 언어(041 $h)를 ISDS 코드로 추정해줘.
-    가능한 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
-
-    도서정보:
+    아래 도서 정보를 분석하여 필요한 MARC 메타데이터를 JSON 형식으로 추정합니다.
+    
+    [도서 정보]
     - 제목: {title}
     - 원제: {original_title or "(없음)"}
-    - 분류: {category}
-    - 출판사: {publisher}
     - 저자: {author}
-
-    지침:
-    - 국가/지역을 언어로 곧바로 치환하지 말 것.
-    - 저자 국적·주 집필 언어·최초 출간 언어를 우선 고려.
-    - 불확실하면 임의 추정 대신 'und' 사용.
-
-    출력형식(정확히 이 2~3줄):
-    $h=[ISDS 코드]
-    #reason=[짧게 근거 요약]
-    #signals=[잡은 단서들, 콤마로](선택)
-    """.strip()
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "system","content":"사서용 언어 추정기"},
-                      {"role":"user","content":prompt}],
-            temperature=0
-        )
-        content = (resp.choices[0].message.content or "").strip()
-        code, reason, signals = _extract_code_and_reason(content, "$h")
-        if code not in ALLOWED_CODES:
-            code = "und"
-        dbg(f"🧭 [GPT 근거] $h={code}")
-        if reason: dbg(f"🧭 [이유] {reason}")
-        if signals: dbg(f"🧭 [단서] {signals}")
-        return code
-    except Exception as e:
-        dbg_error(f"GPT 오류: {e}")
-        return "und"
-
-# ===== GPT 판단 함수 (본문) =====
-def gpt_guess_main_lang(title, category, publisher):
-    prompt = f"""
-    아래 도서의 본문 언어(041 $a)를 ISDS 코드로 추정.
-    가능한 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
-
-    입력:
-    - 제목: {title}
-    - 분류: {category}
+    - 분류(전체 체인): {category_text}
     - 출판사: {publisher}
-
-    지침:
-    - '본문 언어'는 이 자료의 **현시본(Manifestation)** 언어다.
-    - 저자 국적, 원작 언어, 시리즈 원산지 등 **원작 관련 단서 사용 금지**.
-    - 카테고리에 '국내도서'가 있거나, 제목에 **한글이 1자라도** 포함되면 반드시 kor.
-    - 허용 코드 밖이거나 불확실하면 'und'.
-
-    출력형식:
-    $a=[ISDS 코드]
-    #reason=[짧게 근거 요약]
-    #signals=[잡은 단서들, 콤마로](선택)
+    - 설명: {description[:1000] if description else "(없음)"}
+    - 목차: {toc[:1000] if toc else "(없음)"}
+    - 제외어 목록(653 주제어 생성 시 제목/저자 유래 등 비주제 요소): {forbidden_list}
+    
+    [분석 및 지침]
+    1. 본문 언어(lang_a): 이 자료의 **현시본(Manifestation)** 언어(kor, eng, jpn 등 ISDS 코드)를 추정.
+       * **최우선 강제 규칙**: 자료가 '국내도서'이거나 제목에 한글이 포함된 경우 **무조건 kor**로 추정해야 합니다. 그 외의 경우에만 GPT가 판단합니다. (현재 강제 후보: '{domestic_guard}')
+       * 원작 언어(lang_h), 저자 국적 등 **원작 관련 단서 사용 금지**.
+    2. 원서 언어(lang_h): 원작 언어를 ISDS 코드로 추정 (번역서가 아니면 lang_a와 동일할 수 있음).
+       * 저자 국적·주 집필 언어·최초 출간 언어를 우선 고려.
+    3. 653 주제어(keywords_653): 분류/설명/목차에서 핵심 명사 주제어 **최대 5개**를 띄어쓰기 없이 생성.
+       * **제외어 목록**({forbidden_list})에 있는 단어나, 시리즈·출판사·판차·연도 등 **비주제 요소는 절대 포함하지 마세요**.
+       * 너무 일반적/추상적 표현은 제외하고 구체적인 주제를 선택합니다.
+    4. 가능한 ISDS 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur.
+    
+    [출력 형식 (JSON)] - **반드시 이 형식만 출력**
+    {{
+      "lang_a": "[ISDS 코드]",
+      "lang_h": "[ISDS 코드]",
+      "keywords_653": ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"]
+    }}
     """.strip()
+
     try:
         resp = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system","content":"사서용 본문 언어 추정기"},
-                      {"role":"user","content":prompt}],
-            temperature=0
+            messages=[
+                {"role": "system","content": "MARC 메타데이터(041 $a, $h, 653 주제어)를 통합 분석하여 JSON 형식으로만 반환하는 전문가."},
+                {"role":"user","content":prompt}
+            ],
+            temperature=0,
+            response_format={"type": "json_object"}
         )
         content = (resp.choices[0].message.content or "").strip()
-        code, reason, signals = _extract_code_and_reason(content, "$a")
-        if code not in ALLOWED_CODES:
-            code = "und"
-        st.write(f"🧭 [GPT 근거] $a={code}")
-        if reason: st.write(f"🧭 [이유] {reason}")
-        if signals: st.write(f"🧭 [단서] {signals}")
-        return code
+        
+        # --- JSON 파싱 ---
+        try:
+            data = json.loads(content)
+            
+            # --- $a/$h 코드 정리 ---
+            lang_a = data.get("lang_a", "und").lower()
+            lang_h = data.get("lang_h", "und").lower()
+            
+            # $a에 대한 국내도서/한글 제목 강제 규칙 재적용 (GPT가 혹시 틀릴 경우를 대비)
+            if domestic_guard == "kor":
+                 lang_a = "kor"
+
+            if lang_a not in ALLOWED_CODES: lang_a = "und"
+            if lang_h not in ALLOWED_CODES: lang_h = "und"
+            
+            # --- 653 키워드 정리 ---
+            keywords = data.get("keywords_653", [])
+            if not isinstance(keywords, list): keywords = []
+            keywords = [k.strip().replace(" ", "") for k in keywords if k and len(k.strip()) > 1][:5]
+            
+            dbg(f"🧭 [GPT 통합 결과] $a={lang_a}, $h={lang_h}, 653={keywords}")
+            return GptBatchResult(lang_a=lang_a, lang_h=lang_h, keywords_653=keywords)
+
+        except json.JSONDecodeError as e:
+            dbg_err(f"GPT 응답 JSON 파싱 오류: {e}, 원본 응답: {content[:100]}")
+            return GptBatchResult()
+        
     except Exception as e:
-        st.error(f"GPT 오류: {e}")
-        return "und"
-
-# ===== GPT 판단 함수 (신규) — 저자 기반 원서 언어 추정 =====
-def gpt_guess_original_lang_by_author(author, title="", category="", publisher=""):
-    prompt = f"""
-    저자 정보를 중심으로 원서 언어(041 $h)를 ISDS 코드로 추정.
-    가능한 코드: kor, eng, jpn, chi, rus, fre, ger, ita, spa, por, tur
-
-    입력:
-    - 저자: {author}
-    - (참고) 제목: {title}
-    - (참고) 분류: {category}
-    - (참고) 출판사: {publisher}
-
-    지침:
-    - 저자 국적·주 집필 언어·대표 작품 원어를 우선.
-    - 국가=언어 단순 치환 금지.
-    - 불확실하면 'und'.
-
-    출력형식:
-    $h=[ISDS 코드]
-    #reason=[짧게 근거 요약]
-    #signals=[잡은 단서들, 콤마로](선택)
-    """.strip()
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role":"system","content":"저자 기반 원서 언어 추정기"},
-                      {"role":"user","content":prompt}],
-            temperature=0
-        )
-        content = (resp.choices[0].message.content or "").strip()
-        code, reason, signals = _extract_code_and_reason(content, "$h")
-        if code not in ALLOWED_CODES:
-            code = "und"
-        st.write(f"🧭 [저자기반 근거] $h={code}")
-        if reason: st.write(f"🧭 [이유] {reason}")
-        if signals: st.write(f"🧭 [단서] {signals}")
-        return code
-    except Exception as e:
-        st.error(f"GPT(저자기반) 오류: {e}")
-        return "und"
+        dbg_err(f"GPT 통합 호출 오류: {e}")
+        return GptBatchResult()
 
 # ===== 언어 감지 함수들 =====
 def detect_language_by_unicode(text):
@@ -637,97 +433,23 @@ def crawl_aladin_fallback(isbn13):
         dbg_error(f"❌ 크롤링 중 오류 발생: {e}")
         return {}
 
-# ===== 결과 조정(충돌 해소) =====
-def reconcile_language(candidate, fallback_hint=None, author_hint=None):
-    """
-    candidate: 1차 GPT 결과
-    fallback_hint: 카테고리/원제 규칙에서 얻은 힌트(예: 'ger')
-    author_hint: 저자 기반 GPT 결과
-    """
-    if author_hint and author_hint != "und" and author_hint != candidate:
-        st.write(f"🔁 [조정] 저자기반({author_hint}) ≠ 1차({candidate}) → 저자기반 우선")
-        return author_hint
-    if fallback_hint and fallback_hint != "und" and fallback_hint != candidate:
-        if candidate in {"ita","fre","spa","por"}:
-            if fallback_hint == "eng":
-                # 영어 힌트는 흔히 과대검출 — GPT 결과 유지
-                return candidate
-            # 영어가 아니라면(예: ger vs fre) 규칙 힌트를 우선
-            st.write(f"🔁 [조정] 규칙힌트({fallback_hint}) vs 1차({candidate}) → 규칙힌트 우선")
-            return fallback_hint
-            
-    return candidate
-
-# ===== $h 우선순위 결정 (저자 기반 보정 + 근거 로깅 포함) =====
-
-
-def determine_h_language(
-    title: str,
-    original_title: str,
-    category_text: str,
-    publisher: str,
-    author: str,
-    subject_lang: str
-) -> str:
-    """
-    문학: 카테고리/웹 → (부족시) GPT → (여전히 불확실) 저자 기반 보정
-    비문학: GPT → (부족시) 카테고리/웹 → (여전히 불확실) 저자 기반 보정
-    """
-    lit_raw = is_literature_category(category_text)
-    nf_override = is_nonfiction_override(category_text)
-    is_lit_final = lit_raw and not nf_override
-
-    # 사람이 읽기 쉬운 설명
-    if lit_raw and not nf_override:
-        dbg("📘 [판정] 이 자료는 문학(소설/시/희곡 등) 성격이 뚜렷합니다.")
-    elif lit_raw and nf_override:
-        dbg("📘 [판정] 겉보기에는 문학이지만, '역사·에세이·사회과학' 등 비문학 요소가 함께 보여 최종적으로는 비문학으로 처리될 수 있습니다.")
-    elif not lit_raw and nf_override:
-        dbg("📘 [판정] 문학적 단서는 없고, 비문학(역사·사회·철학 등) 성격이 강합니다.")
-    else:
-        dbg("📘 [판정] 문학/비문학 판단 단서가 약해 추가 판단이 필요합니다.")
-
-    rule_from_original = detect_language(original_title) if original_title else "und"
-    lang_h = None
-    author_hint = None
-
-    if is_lit_final:
-        # 문학: 1) 카테고리/웹 → 2) 원제 유니코드 → 3) GPT → 4) 저자 기반
-        lang_h = subject_lang or rule_from_original
-        dbg(f"📘 [설명] (문학 흐름) 1차 후보: {lang_h or 'und'}")
-        if not lang_h or lang_h == "und":
-            dbg("📘 [설명] (문학 흐름) GPT 보완 시도…")
-            lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
-            dbg(f"📘 [설명] (문학 흐름) GPT 결과: {lang_h}")
-        if (not lang_h or lang_h == "und") and author:
-            dbg("📘 [설명] (문학 흐름) 원제 없음/애매 → 저자 기반 보정 시도…")
-            author_hint = gpt_guess_original_lang_by_author(author, title, category_text, publisher)
-            dbg(f"📘 [설명] (문학 흐름) 저자 기반 결과: {author_hint}")
-    else:
-        # 비문학: 1) GPT → 2) 카테고리/웹 → 3) 원제 유니코드 → 4) 저자 기반
-        dbg("📘 [설명] (비문학 흐름) GPT 선행 판단…")
-        lang_h = gpt_guess_original_lang(title, category_text, publisher, author, original_title)
-        dbg(f"📘 [설명] (비문학 흐름) GPT 결과: {lang_h or 'und'}")
-        if not lang_h or lang_h == "und":
-            lang_h = subject_lang or rule_from_original
-            dbg(f"📘 [설명] (비문학 흐름) 보조 규칙 적용 → 후보: {lang_h or 'und'}")
-        if author and (not lang_h or lang_h == "und"):
-            dbg("📘 [설명] (비문학 흐름) 원제 없음/애매 → 저자 기반 보정 시도…")
-            author_hint = gpt_guess_original_lang_by_author(author, title, category_text, publisher)
-            dbg(f"📘 [설명] (비문학 흐름) 저자 기반 결과: {author_hint}")
-
-    # 충돌 조정
-    fallback_hint = subject_lang or rule_from_original
-    lang_h = reconcile_language(candidate=lang_h, fallback_hint=fallback_hint, author_hint=author_hint)
-    dbg("📘 [결과] 조정 후 원서 언어(h) =", lang_h)
-
-    return (lang_h if lang_h in ALLOWED_CODES else "und") or "und"
-
 # ===== 국내도서 여부 가드 =====
 def is_domestic_category(category_text: str) -> bool:
     return "국내도서" in (category_text or "")
 
-# ===== KORMARC 태그 생성기 =====
+# ===== 546 생성 (041만 보고) - (get_kormarc_tags에서 호출됨) =====
+def generate_546_from_041_kormarc(tag_041: str):
+    """041 태그에서 $a와 $h 코드를 추출하여 546 태그 문자열 생성"""
+    m = re.search(r"\$a(\w{3})\s+\$h(\w{3})", tag_041)
+    if m:
+        lang_a_code = m.group(1)
+        lang_h_code = m.group(2)
+        lang_a_name = ISDS_LANGUAGE_CODES.get(lang_a_code, lang_a_code)
+        lang_h_name = ISDS_LANGUAGE_CODES.get(lang_h_code, lang_h_code)
+        return f"546 $a{lang_h_name} 원작을 {lang_a_name}로 번역."
+    return None
+
+# ===== KORMARC 태그 생성기 (통합 GPT 호출 사용) =====
 def get_kormarc_tags(isbn):
     isbn = isbn.strip().replace("-", "")
     url = "http://www.aladin.co.kr/ttb/api/ItemLookUp.aspx"
@@ -738,6 +460,11 @@ def get_kormarc_tags(isbn):
         "output": "xml",
         "Version": "20131101"
     }
+    
+    # 653 생성을 위해 필요한 추가 데이터 초기화
+    description = ""
+    toc = ""
+    
     try:
         response = requests.get(url, params=params)
         if response.status_code != 200:
@@ -755,60 +482,58 @@ def get_kormarc_tags(isbn):
         subinfo = item.find("subInfo")
         original_title = subinfo.findtext("originalTitle") if subinfo is not None else ""
         original_title = html.unescape(original_title or "")
-
+        
+        # 653 생성을 위해 필요한 Description 및 TOC (알라딘 API JSON/XML에 없는 경우 있음)
+        description = item.findtext("description", default="") or ""
+        toc = subinfo.findtext("toc", default="") if subinfo is not None else ""
+        
         crawl = crawl_aladin_fallback(isbn)
         if not original_title:
             original_title = crawl.get("original_title", "")
-        subject_lang = crawl.get("subject_lang")
+        # subject_lang = crawl.get("subject_lang") # 카테고리 기반 언어 힌트 (이제 GPT 프롬프트에서 직접 활용)
         category_text = crawl.get("category_text", "")
-
-        # ---- $a: 본문 언어 ----
         
-        # 1) 규칙 기반 1차 감지
-        lang_a = detect_language(title)
-        dbg("📘 [DEBUG] 규칙 기반 1차 lang_a =", lang_a)
-        # 2) 강한 가드: '국내도서'면 kor로 고정
-        if is_domestic_category(category_text):
-            dbg("📘 [판정] 카테고리에 '국내도서' 감지 → $a=kor(강한 가드)")
-            lang_a = "kor"
-        # 3) GPT 보조: und/eng일 때만 호출
-        if lang_a in ('und', 'eng'):
-            dbg("📘 [설명] und/eng → GPT 보조로 본문 언어 재판정…")
-            gpt_a = gpt_guess_main_lang(title, category_text, publisher)
-            dbg(f"📘 [설명] GPT 판단 lang_a = {gpt_a}")
-            if gpt_a in ALLOWED_CODES:
-                lang_a = gpt_a
-            else:
-                lang_a = "und"
-
-        # ---- $h: 원저 언어 (저자 기반 보정 & 근거 로깅 포함) ----
-        dbg("📘 [DEBUG] 원제 감지됨:", bool(original_title), "| 원제:", original_title or "(없음)")
-        dbg("📘 [DEBUG] 카테고리 기반 lang_h 후보 =", subject_lang or "(없음)")
-        lang_h = determine_h_language(
+        # --- 1. GPT 통합 분석 호출 (041 $a, $h 및 653 주제어) ---
+        dbg("📘 [설명] GPT 통합 분석 호출 시작 (041 $a, $h 및 653 주제어)")
+        gpt_result = gpt_batch_metadata_analysis(
             title=title,
             original_title=original_title,
             category_text=category_text,
             publisher=publisher,
             author=author,
-            subject_lang=subject_lang
+            description=description,
+            toc=toc
         )
-        dbg("📘 [결과] 최종 원서 언어(h) =", lang_h)
+        
+        lang_a = gpt_result.lang_a
+        lang_h = gpt_result.lang_h
+        keywords_653 = gpt_result.keywords_653
+        dbg("📘 [결과] 통합 GPT 분석 완료")
 
-        # ---- 태그 조합 ----
+        # --- 2. 041 태그 조합 ---
+        
+        # $a가 kor인데 $h가 다른 언어일 경우 (번역서)
         if lang_h and lang_h != lang_a and lang_h != "und":
             tag_041 = f"041 $a{lang_a} $h{lang_h}"
         else:
+            # $a와 $h가 같거나 $h가 und이면 $h는 추가하지 않음 (비번역서)
             tag_041 = f"041 $a{lang_a}"
 
         # ✅ 번역서($h) 아님 → 041/546 둘 다 만들지 않음
         if "$h" not in tag_041:
-            return None, None, original_title
+            # tag_041, tag_546, original_title, keywords_653
+            return tag_041, None, original_title, keywords_653
 
         # ✅ 번역서일 때만 546 생성
         tag_546 = generate_546_from_041_kormarc(tag_041)
-        return tag_041, tag_546, original_title
+
+        # 041 태그, 546 태그, 원제, 653 키워드 목록을 반환
+        return tag_041, tag_546, original_title, keywords_653
+        
     except Exception as e:
-        return f"📕 예외 발생: {e}", "", ""
+        dbg_err(f"📕 예외 발생: {e}")
+        # 예외 발생 시 빈 리스트를 포함하여 반환 형식을 유지
+        return f"📕 예외 발생: {e}", None, "", []
 
 def _as_mrk_041(tag_041: str | None) -> str | None:
     """
@@ -840,9 +565,7 @@ def _as_mrk_546(tag_546_text: str | None) -> str | None:
         return t
     if t.startswith("$a"):
         return f"=546  \\\\{t}"
-    return f"=546  \\\\$a{t}"
-
-
+    return f"=546  \\\\$a{t}
 
 # =========================
 # 저자 서명 필드 관련                   
@@ -3636,27 +3359,6 @@ def _build_020_from_item_and_nlk(isbn: str, item: dict) -> str:
 
     return "".join(parts)
 
-
-
-def _build_653_via_gpt(item: dict) -> str | None:
-    """네가 올린 generate_653_with_gpt() 그대로 활용해서 653 한 줄 반환."""
-    title = (item or {}).get("title","") or ""
-    category = (item or {}).get("categoryName","") or ""
-    raw_author = (item or {}).get("author","") or ""
-    desc = (item or {}).get("description","") or ""
-    toc  = ((item or {}).get("subInfo",{}) or {}).get("toc","") or ""
-
-    kwline = generate_653_with_gpt(
-        category=category,
-        title=title,
-        authors=_clean_author_str(raw_author),
-        description=desc,
-        toc=toc,
-        max_keywords=7
-    )
-    # kwline이 "$a키워드$a..." 형태라고 가정
-    return f"=653  \\\\{kwline.replace(' ', '')}" if kwline else None
-
 def _parse_653_keywords(tag_653: str | None) -> list[str]:
     """
     '=653  \\$a아동문학$a정서조절$a시간관리' → ['아동문학','정서조절','시간관리']
@@ -4740,452 +4442,175 @@ def build_300_mrk(item: dict) -> str:
     return tag_300
 # =========================================================================================
 
-def generate_all_oneclick(
-    isbn: str,
-    reg_mark: str = "",
-    reg_no: str = "",
-    copy_symbol: str = "",
-    use_ai_940: bool = True
-):
-    """
-    📌 PATCH2 완성본
-    - GPT 호출: 1회
-    - 041, 546, 653, 056 모두 GPT에서 JSON으로 받고 너의 기존 조립 규칙을 그대로 유지
-    - 나머지 흐름(245/260/008/700/90010/940/300 등)은 기존 코드 100% 유지
-    """
-
-    mb = MarcBuilder()
+def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_symbol: str = "", use_ai_940: bool = True):
+    mb = MarcBuilder()       # ✅ 단일 소스(Record+MRK)
     marc_rec = Record(to_unicode=True, force_utf8=True)
-    meta = {}
-
+    meta = {"sources": {}, "notes": [], "provenance": {}}
+    
     global CURRENT_DEBUG_LINES
     CURRENT_DEBUG_LINES = []
 
     pieces = []
-
-    # ===========================
-    # ① 원본 메타데이터 수집
-    # ===========================
+    
     author_raw, _ = fetch_nlk_author_only(isbn)
     item = fetch_aladin_item(isbn)
 
-    title = (item or {}).get("title", "") or ""
-    category = (item or {}).get("categoryName", "") or ""
-    description = (item or {}).get("description", "") or ""
-    toc = ((item or {}).get("subInfo", {}) or {}).get("toc", "") or ""
-    subtitle = ((item or {}).get("subInfo", {}) or {}).get("subTitle", "") or ""
-    publisher_raw = (item or {}).get("publisher", "")
-    pubdate = (item or {}).get("pubDate", "")
-    pubyear = pubdate[:4] if len(pubdate) >= 4 else ""
-
-    # ===========================
-    # ② GPT MASTER 통합 호출
-    # ===========================
-    book_info_for_gpt = {
-        "isbn": isbn,
-        "title": title,
-        "subtitle": subtitle,
-        "author_raw": author_raw,
-        "category": category,
-        "description": description,
-        "toc": toc,
-        "publisher": publisher_raw,
-        "pubyear": pubyear,
-    }
-
-    gpt_tags = call_gpt_master(book_info_for_gpt)
-
-    # ===========================
-    # ③ GPT JSON → 태그 변환
-    # ===========================
-    tag_041_text = make_041(gpt_tags.get("041"))
-    tag_546_text = make_546(gpt_tags.get("546"))
-    tag_653 = make_653(gpt_tags.get("653"))
-    tag_056 = make_056(gpt_tags.get("056"))
-
-    # pymarc 변환
-    f_041 = mrk_str_to_field(tag_041_text) if tag_041_text else None
-    f_546 = mrk_str_to_field(tag_546_text) if tag_546_text else None
-    f_653 = mrk_str_to_field(tag_653) if tag_653 else None
-    f_056 = mrk_str_to_field(tag_056) if tag_056 else None
-
-    # ===========================
-    # ④ 245 / 246 / 700 (기존 코드 그대로)
-    # ===========================
-    marc245 = build_245_with_people_from_sources(item, author_raw, prefer="aladin")
-    f_245 = mrk_str_to_field(marc245)
-
-    marc246 = build_246_from_aladin_item(item)
-    f_246 = mrk_str_to_field(marc246)
-
-    # 700
-    origin_lang = None
-    if tag_041_text:
-        m = re.search(r"\$h([a-z]{3})", tag_041_text, re.I)
-        if m:
-            origin_lang = m.group(1).lower()
-
-    mrk_700 = build_700_people_pref_aladin(
-        author_raw, item, origin_lang_code=origin_lang
-    ) or []
-
-    # ===========================
-    # ⑤ 90010
-    # ===========================
-    people = extract_people_from_aladin(item) if item else {}
-    mrk_90010 = build_90010_from_wikidata(people, include_translator=False)
-
-    # ===========================
-    # ⑥ 940
-    # ===========================
-    a_out, n = parse_245_a_n(marc245)
-    mrk_940 = build_940_from_title_a(
-        a_out,
-        use_ai=use_ai_940,
-        disable_number_reading=bool(n)
-    )
-
-    # ===========================
-    # ⑦ 260 / 008
-    # ===========================
-    bundle = build_pub_location_bundle(isbn, publisher_raw)
-
-    tag_260 = build_260(
-        place_display=bundle["place_display"],
-        publisher_name=publisher_raw,
-        pubyear=pubyear,
-    )
-    f_260 = mrk_str_to_field(tag_260)
-
-    lang3_override = (gpt_tags.get("041") or {}).get("a")
-
-    data_008 = build_008_from_isbn(
-        isbn,
-        aladin_pubdate=pubdate,
-        aladin_title=title,
-        aladin_category=category,
-        aladin_desc=description,
-        aladin_toc=toc,
-        override_country3=bundle["country_code"],
-        override_lang3=lang3_override,
-        cataloging_src="a",
-    )
-    field_008 = Field(tag="008", data=data_008)
-
-    pieces.append((field_008, "=008  " + data_008))
-
-    # ===========================
-    # ⑧ 007
-    # ===========================
-    field_007 = Field(tag="007", data="ta")
-    pieces.append((field_007, "=007  ta"))
-
-    # ===========================
-    # ⑨ 020 / SET
-    # ===========================
-    tag_020 = _build_020_from_item_and_nlk(isbn, item)
-    f_020 = mrk_str_to_field(tag_020)
-
-    nlk_extra = fetch_additional_code_from_nlk(isbn)
-    set_isbn = nlk_extra.get("set_isbn", "").strip()
-
-    # ===========================
-    # ⑩ 300
-    # ===========================
-    tag_300, f_300 = build_300_from_aladin_detail(item)
-
-    # ===========================
-    # ⑪ 950 / 049
-    # ===========================
-    tag_950 = build_950_from_item_and_price(item, isbn)
-    f_950 = mrk_str_to_field(tag_950)
-
-    field_049 = build_049(reg_mark, reg_no, copy_symbol)
-    f_049 = mrk_str_to_field(field_049)
-
-    # ===========================
-    # ⑫ 순서대로 pieces 조립
-    # ===========================
-    if f_020: pieces.append((f_020, tag_020))
-    if set_isbn:
-        t = f"=020  1\\$a{set_isbn} (set)"
-        pieces.append((mrk_str_to_field(t), t))
-
-    if f_041: pieces.append((f_041, tag_041_text))
-    if f_056: pieces.append((f_056, tag_056))
-    if f_245: pieces.append((f_245, marc245))
-    if f_246: pieces.append((f_246, marc246))
-    if f_260: pieces.append((f_260, tag_260))
-    if f_300: pieces.append((f_300, tag_300))
-    if f_546: pieces.append((f_546, tag_546_text))
-    if f_653: pieces.append((f_653, tag_653))
-
-    for m in mrk_700:
-        pieces.append((mrk_str_to_field(m), m))
-    for m in mrk_90010:
-        pieces.append((mrk_str_to_field(m), m))
-    for m in mrk_940:
-        pieces.append((mrk_str_to_field(m), m))
-    if f_950: pieces.append((f_950, tag_950))
-    if f_049: pieces.append((f_049, field_049))
-
-    # ===========================
-    # ⑬ record 구성
-    # ===========================
-    mrk_strings = [m for f, m in pieces]
-
-    print("===== FINAL MRK TEXT DUMP =====")
-    print("\n".join(mrk_strings))
-
-    for f, _ in pieces:
-        marc_rec.add_field(f)
-
-    marc_bytes = marc_rec.as_marc()
-
-    meta.update({
-        "041": tag_041_text,
-        "546": tag_546_text,
-        "653": tag_653,
-        "056": tag_056,
-        "CountryCode_008": bundle.get("country_code"),
-    })
-
-    return marc_rec, marc_bytes, "\n".join(mrk_strings), meta
-
-    # -------------------------------
-    # ① 원본 데이터 준비
-    # -------------------------------
-    author_raw, _ = fetch_nlk_author_only(isbn)
-    item = fetch_aladin_item(isbn)
-
-    title = (item or {}).get("title", "") or ""
-    category = (item or {}).get("categoryName", "") or ""
-    description = (item or {}).get("description", "") or ""
-    toc = ((item or {}).get("subInfo", {}) or {}).get("toc", "") or ""
-    subtitle = ((item or {}).get("subInfo", {}) or {}).get("subTitle", "") or ""
-    publisher_raw = (item or {}).get("publisher", "")
-    pubdate = (item or {}).get("pubDate", "")
-    pubyear = pubdate[:4] if len(pubdate) >= 4 else ""
-
-    # -------------------------------
-    # ② GPT 통합 호출(PATCH 핵심)
-    # -------------------------------
-    book_info_for_gpt = {
-        "isbn": isbn,
-        "title": title,
-        "subtitle": subtitle,
-        "author_raw": author_raw,
-        "category": category,
-        "description": description,
-        "toc": toc,
-        "publisher": publisher_raw,
-        "pubyear": pubyear,
-    }
-
-    dbg("📘 [GPT MASTER] 통합 호출 시작…")
-
-    gpt_tags = call_gpt_master(book_info_for_gpt)
-    # gpt_tags 구조 예:
-    # {
-    #   "041": {"a": "kor", "h": "eng"},
-    #   "546": "영어 원작을 한국어로 번역",
-    #   "653": ["독서문화", "아동문학", ...],
-    #   "056": "823"
-    # }
-
-    dbg("📘 [GPT MASTER 결과] ", gpt_tags)
-
-    # -----------------------------------------------------
-    # ③ GPT JSON → 기존 MARC 규칙대로 태그 조립
-    # -----------------------------------------------------
-    # 041
-    if gpt_tags.get("041"):
-        a = gpt_tags["041"].get("a")
-        h = gpt_tags["041"].get("h")
-        if a and h:
-            tag_041_text = f"=041  \\\\$a{a}$h{h}"
-        elif a:
-            tag_041_text = f"=041  \\\\$a{a}"
-        else:
+    # ① 041/546 (네 최종 get_kormarc_tags 사용)
+    tag_041_text = tag_546_text = _orig = None
+    try:
+        res = get_kormarc_tags(isbn)  # (tag_041:str, tag_546_text:str, original_title:str) 기대
+        if isinstance(res, (list, tuple)) and len(res) == 3:
+            tag_041_text, tag_546_text, _orig = res
+        # 알라딘/크롤링 예외 시 "📕 예외 발생:" 같은 문자열이 올 수도 있으니 방어
+        if isinstance(tag_041_text, str) and tag_041_text.startswith("📕 예외 발생"):
             tag_041_text = None
-    else:
+        if isinstance(tag_546_text, str) and tag_546_text.startswith("📕 예외 발생"):
+            tag_546_text = None
+    except Exception:
         tag_041_text = None
-
-    # 546
-    tag_546_text = None
-    if gpt_tags.get("546"):
-        tag_546_text = f"=546  \\\\$a{gpt_tags['546']}"
-
-    # 653
-    tag_653 = None
-    if gpt_tags.get("653"):
-        kws = gpt_tags["653"]
-        if isinstance(kws, list) and kws:
-            body = "".join(f"$a{kw}" for kw in kws)
-            tag_653 = f"=653  \\\\{body}"
-
-    # 056
-    tag_056 = None
-    if gpt_tags.get("056"):
-        code = gpt_tags["056"]
-        if re.fullmatch(r"\d{1,3}", code):
-            tag_056 = f"=056  \\\\$a{code}$26"
-
-    # -------------------------------
-    # ④ 245/246/700 (GPT와 무관 → 기존코드 유지)
-    # -------------------------------
-    marc245 = build_245_with_people_from_sources(item, author_raw, prefer="aladin")
-    f_245 = mrk_str_to_field(marc245)
-
-    marc246 = build_246_from_aladin_item(item)
-    f_246 = mrk_str_to_field(marc246)
-
+        tag_546_text = None
     origin_lang = None
     if tag_041_text:
-        m = re.search(r"\$h([a-z]{3})", tag_041_text, re.I)
+        m = re.search(r"\$h([a-z]{3})", tag_041_text, re.IGNORECASE)
         if m:
             origin_lang = m.group(1).lower()
 
+    # 245 / 246 / 700
+    marc245 = build_245_with_people_from_sources(item, author_raw, prefer="aladin")
+    f_245 = mrk_str_to_field(marc245)
+    marc246 = build_246_from_aladin_item(item)
+    f_246 = mrk_str_to_field(marc246)
     mrk_700 = build_700_people_pref_aladin(
         author_raw,
         item,
         origin_lang_code=origin_lang
     ) or []
 
-    # -------------------------------
-    # ⑤ 90010
-    # -------------------------------
+    # 90010: LOD에서 원어명 가져오기 (지은이, 옮긴이 제외)
     people = extract_people_from_aladin(item) if item else {}
     mrk_90010 = build_90010_from_wikidata(people, include_translator=False)
 
-    # -------------------------------
-    # ⑥ 940
-    # -------------------------------
+    # 940: 245 $a만으로 생성, $n 있으면 숫자 읽기 금지
     a_out, n = parse_245_a_n(marc245)
-    mrk_940 = build_940_from_title_a(
-        a_out,
-        use_ai=use_ai_940,
-        disable_number_reading=bool(n)
+    mrk_940 = build_940_from_title_a(a_out, use_ai=use_ai_940, disable_number_reading=bool(n))
+
+    
+    # 260 발행사항
+    publisher_raw = (item or {}).get("publisher", "")          
+    pubdate       = (item or {}).get("pubDate", "") or ""      
+    pubyear       = (pubdate[:4] if len(pubdate) >= 4 else "") 
+
+    bundle = build_pub_location_bundle(isbn, publisher_raw)     
+    dbg(
+        "📍[BUNDLE]",
+        f"source={bundle.get('source')}",
+        f"place_raw={bundle.get('place_raw')}",
+        f"place_display={bundle.get('place_display')}",
+        f"country_code={bundle.get('country_code')}",
     )
+    for m in (bundle.get("debug") or []):
+        dbg("[BUNDLE]", m)
 
-    # -------------------------------
-    # ⑦ 출판지, 260, 008
-    # -------------------------------
-    bundle = build_pub_location_bundle(isbn, publisher_raw)
-
-    tag_260 = build_260(
+    tag_260 = build_260(                                      
         place_display=bundle["place_display"],
         publisher_name=publisher_raw,
         pubyear=pubyear,
     )
     f_260 = mrk_str_to_field(tag_260)
 
-    lang3_override = (gpt_tags.get("041") or {}).get("a")
-
+     # ② 008 (041의 $a로 lang3 override)
+    title   = (item or {}).get("title","") or ""
+    category= (item or {}).get("categoryName","") or ""
+    desc    = (item or {}).get("description","") or ""
+    toc     = ((item or {}).get("subInfo",{}) or {}).get("toc","") or ""
+    lang3_override = _lang3_from_tag041(tag_041_text) if tag_041_text else None
+    
     data_008 = build_008_from_isbn(
         isbn,
-        aladin_pubdate=pubdate or "",
-        aladin_title=title or "",
-        aladin_category=category or "",
-        aladin_desc=description or "",
-        aladin_toc=toc or "",
-        override_country3=bundle["country_code"],
+        aladin_pubdate=(item or {}).get("pubDate","") or "",
+        aladin_title=(item or {}).get("title","") or "",
+        aladin_category=(item or {}).get("categoryName","") or "",
+        aladin_desc=(item or {}).get("description","") or "",
+        aladin_toc=((item or {}).get("subInfo",{}) or {}).get("toc","") or "",
+        override_country3=bundle["country_code"],   # ✅ KPIPA DB 기반 country3
         override_lang3=lang3_override,
         cataloging_src="a",
     )
-    field_008 = Field(tag="008", data=data_008)
-    pieces.append((field_008, "=008  " + data_008))
+    field_008 = Field(tag='008', data=data_008)
+    mb.add_ctl("008", data_008)
 
-    # -------------------------------
-    # ⑧ 007
-    # -------------------------------
-    field_007 = Field(tag="007", data="ta")
+    # ③ 007 (물리적 자료 형태)
+    field_007 = Field(tag='007', data='ta')
     pieces.append((field_007, "=007  ta"))
+    
 
-    # -------------------------------
-    # ⑨ 020 / 020 Set
-    # -------------------------------
+    # ③ 020 (가격 + NLK 부가기호) + 0201 set_isbn
     tag_020 = _build_020_from_item_and_nlk(isbn, item)
     f_020 = mrk_str_to_field(tag_020)
-
     nlk_extra = fetch_additional_code_from_nlk(isbn)
     set_isbn = nlk_extra.get("set_isbn", "").strip()
 
-    # -------------------------------
-    # ⑩ 300
-    # -------------------------------
+    # ④ 653 (GPT) — 먼저 생성하여 056에 힌트로 사용
+    tag_653 = _build_653_via_gpt(item)
+    f_653   = mrk_str_to_field(tag_653) if tag_653 else None
+
+    # (내성 확보 + 재현성) 653 → 힌트 추출
+    def _normalize_kw_hint(arr: list[str]) -> list[str]:
+        seen = set(); out = []
+        for w in (arr or []):
+            w = (w or "").strip()
+            if w and w not in seen:
+                seen.add(w); out.append(w)
+        # 사전순 정렬로 입력 순서 잡음 제거 + 최대 7개 제한
+        return sorted(out)[:7]
+
+    try:
+        kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
+        kw_hint = _normalize_kw_hint(kw_hint_raw)
+    except Exception as e:
+        dbg_err(f"653 파싱 실패: {e}")
+        kw_hint = []
+
+    dbg("653 keywords hint →", kw_hint)
+
+    # ★ 056 (KDC) — 알라딘/스크레이핑 + LLM로 숫자만 받아 생성 (653 힌트 주입)
+    kdc_code = None
+    try:
+        kdc_code = get_kdc_from_isbn(
+            isbn,
+            ttbkey=ALADIN_TTB_KEY,
+            openai_key=openai_key,
+            model=model,
+            keywords_hint=kw_hint      # <= 새 인자 전달
+        )
+        # 숫자 포맷 검증(안전)
+        if kdc_code and not re.fullmatch(r"\d{1,3}", kdc_code):
+            kdc_code = None
+    except Exception as e:
+        dbg_err(f"056 생성 중 예외: {e}")
+
+    # $2는 사용하는 판으로 (예: KDC6)
+    tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
+    f_056 = mrk_str_to_field(tag_056)
+
+    # 490.830 (총서)
+    tag_490, tag_830 = build_490_830_mrk_from_item(item)
+    f_490 = mrk_str_to_field(tag_490)
+    f_830 = mrk_str_to_field(tag_830)
+
+    # ③ 300 (형태사항)
     tag_300, f_300 = build_300_from_aladin_detail(item)
 
-    # 950
+    
+    # 950 (가격만 따로 생성)
     tag_950 = build_950_from_item_and_price(item, isbn)
     f_950 = mrk_str_to_field(tag_950)
-
+    
     # 049
     field_049 = build_049(reg_mark, reg_no, copy_symbol)
-    f_049 = mrk_str_to_field(field_049)
+    f_049 = mrk_str_to_field(field_049)    
 
-    # -------------------------------
-    # ⑪ 태그 순서대로 조립(PATCH2도 유지)
-    # -------------------------------
-    if f_020: pieces.append((f_020, tag_020))
-    if set_isbn:
-        t = f"=020  1\\$a{set_isbn} (set)"
-        pieces.append((mrk_str_to_field(t), t))
 
-    # 041 / 546 (GPT 결과)
-    if tag_041_text:
-        pieces.append((mrk_str_to_field(tag_041_text), tag_041_text))
-    if tag_546_text:
-        pieces.append((mrk_str_to_field(tag_546_text), tag_546_text))
-
-    # 056
-    if tag_056:
-        pieces.append((mrk_str_to_field(tag_056), tag_056))
-
-    if f_245: pieces.append((f_245, marc245))
-    if f_246: pieces.append((f_246, marc246))
-    if f_260: pieces.append((f_260, tag_260))
-    if f_300: pieces.append((f_300, tag_300))
-    if tag_653:
-        pieces.append((mrk_str_to_field(tag_653), tag_653))
-
-    for m in mrk_700:
-        pieces.append((mrk_str_to_field(m), m))
-
-    for m in mrk_90010:
-        pieces.append((mrk_str_to_field(m), m))
-
-    for m in mrk_940:
-        pieces.append((mrk_str_to_field(m), m))
-
-    if f_950: pieces.append((f_950, tag_950))
-    if f_049: pieces.append((f_049, field_049))
-
-    # -------------------------------
-    # ⑫ Record 객체 생성
-    # -------------------------------
-    mrk_strings = [m for f, m in pieces]
-
-    print("===== FINAL MRK TEXT DUMP =====")
-    print("\n".join(mrk_strings))
-
-    for f, _ in pieces:
-        marc_rec.add_field(f)
-
-    marc_bytes = marc_rec.as_marc()
-
-    meta.update({
-        "041": tag_041_text,
-        "546": tag_546_text,
-        "653": tag_653,
-        "056": tag_056,
-        "Publisher_raw": publisher_raw,
-        "pubyear": pubyear,
-        "CountryCode_008": bundle.get("country_code"),
-        "debug_lines": list(CURRENT_DEBUG_LINES),
-    })
-
-    return marc_rec, marc_bytes, "\n".join(mrk_strings), meta
 
     # =====================
     # 순서대로 조립 (MRK 출력 순서 유지)
