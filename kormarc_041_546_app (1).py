@@ -1087,7 +1087,7 @@ def run_and_export(
 
 st.header("📚 ISBN → MARC 자동 생성기 (GPT-4o 단 1회 호출)")
 
-st.checkbox("🧠 940 생성에 OpenAI 활용", value=True, key="use_ai_940")
+st.checkbox("🧠 940 생성에 OpenAI 활용", value=True, key="use_ai_940_flag")
 
 # --- 입력 Form ---
 with st.form(key="isbn_form", clear_on_submit=False):
@@ -1425,3 +1425,4 @@ with st.expander("⚙️ 사용 팁"):
         - 모든 MARC는 MRK/MRC로 다운로드 가능
         """
     )
+
