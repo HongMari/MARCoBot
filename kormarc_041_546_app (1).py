@@ -12,7 +12,7 @@ import threading
 import math
 from string import Template
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import quote_plus, urljoin
