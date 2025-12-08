@@ -11,6 +11,7 @@ import requests
 import pandas as pd
 import datetime
 from dataclasses import dataclass
+from typing import Optional, Dict, Any
 from collections import Counter
 from bs4 import BeautifulSoup
 
@@ -18,6 +19,17 @@ import streamlit as st
 from pymarc import Record, Field, Subfield, MARCWriter
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
+
+class BookInfo:
+    title: str = ""
+    author: str = ""
+    pub_date: str = ""
+    publisher: str = ""
+    isbn13: str = ""
+    category: str = ""
+    description: str = ""
+    toc: str = ""
+    extra: Optional[Dict[str, Any]] = None
 
 # ---------------------------
 # Global Session
@@ -1074,17 +1086,6 @@ def _parse_653_keywords(tag_653: str | None):
             out.append(p)
     return out
 
-class BookInfo:
-    title: str = ""
-    author: str = ""
-    pub_date: str = ""
-    publisher: str = ""
-    isbn13: str = ""
-    category: str = ""
-    description: str = ""
-    toc: str = ""
-    extra: Optional[Dict[str, Any]] = None
-
 # ============================================
 # PART 6 — 056(KDC) 자동분류 생성기 (GPT 1회 호출)
 # ============================================
@@ -1961,5 +1962,6 @@ if submitted:
         file_name="marc_output_all.mrc",
         mime="application/octet-stream",
     )
+
 
 
