@@ -229,7 +229,7 @@ def build_008_from_isbn(
         date_entered=today,
         date1=date1,
         country3=country3,
-        lang3=lang=lang3,
+        lang3=lang3,
         illus4=illus4,
         has_index=has_index,
         lit_form=lit_form,
@@ -1841,3 +1841,4 @@ with st.expander("⚙️ 사용 팁"):
 - 041/546: **GPT Master 1회 호출로 동시 생성**
         """
     )
+
