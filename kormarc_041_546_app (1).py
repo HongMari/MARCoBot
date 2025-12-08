@@ -434,7 +434,7 @@ def aladin_lookup_by_api(isbn13: str, ttbkey: str) -> "BookInfo | None":
 # ------------------------------------------------------
 # 알라딘 웹 검색 → 상품 상세 페이지 스크레이핑 (백업 방식)
 # ------------------------------------------------------
-def aladin_lookup_by_web(isbn13: str) -> dataclass | None:
+def aladin_lookup_by_web(isbn13: str) -> "BookInfo | None":
     try:
         params = {"SearchTarget": "Book", "SearchWord": f"isbn:{isbn13}"}
         sr = requests.get(ALADIN_SEARCH_URL, params=params, headers=HEADERS, timeout=15)
@@ -1962,6 +1962,7 @@ if submitted:
         file_name="marc_output_all.mrc",
         mime="application/octet-stream",
     )
+
 
 
 
