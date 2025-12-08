@@ -1080,31 +1080,6 @@ def run_and_export(
 
     return record, marc_bytes, mrk_text, meta
 
-
-# ============================================================
-# Streamlit UI
-# ============================================================
-
-st.header("📚 ISBN → MARC 자동 생성기 (GPT-4o 단 1회 호출)")
-
-st.checkbox("🧠 940 생성에 OpenAI 활용", value=True, key="use_ai_940_flag")
-
-# --- 입력 Form ---
-with st.form(key="isbn_form_main", clear_on_submit=False):
-    st.text_input(
-        "🔹 단일 ISBN 입력",
-        placeholder="예: 9788937462849",
-        key="single_isbn_input"
-    )
-    st.file_uploader(
-        "📁 CSV 업로드 (UTF-8, 열: ISBN, 등록기호, 등록번호, 별치기호)",
-        type=["csv"],
-        key="csv_uploader",
-    )
-
-    submitted = st.form_submit_button("🚀 변환 실행", use_container_width=True)
-
-
 # ------------------------------------------------------------
 # 제출 후 처리
 # ------------------------------------------------------------
@@ -1425,5 +1400,6 @@ with st.expander("⚙️ 사용 팁"):
         - 모든 MARC는 MRK/MRC로 다운로드 가능
         """
     )
+
 
 
