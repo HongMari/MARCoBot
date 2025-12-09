@@ -4704,7 +4704,14 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
         future_653 = ex.submit(_build_653_via_gpt, item)
 
         # ③ 056 (GPT / KDC)
-        future_056 = ex.submit(get_kdc_from_isbn, isbn, ALADIN_TTB_KEY, openai_key, model, None,   # kw_hint는 아직 넣지 않음)
+        future_056 = ex.submit(
+            get_kdc_from_isbn,
+            isbn,
+            ALADIN_TTB_KEY,
+            openai_key,
+            model,
+            None   # kw_hint는 아직 넣지 않음
+        )
 
         # --- 결과 회수 ---
         bundle   = future_bundle.result()
