@@ -4583,9 +4583,12 @@ def build_300_mrk(item: dict) -> str:
     return tag_300
 
 # =========================================================================================
-
 def generate_all_oneclick(
-    isbn: str, reg_mark: str = "", reg_no: str = "", copy_symbol: str = "", use_ai_940: bool = True
+    isbn: str,
+    reg_mark: str = "",
+    reg_no: str = "",
+    copy_symbol: str = "",
+    use_ai_940: bool = True
 ):
     # ======================================
     # 타임 프로파일러 삽입
@@ -4596,29 +4599,29 @@ def generate_all_oneclick(
     def _mark(name):
         _t[name] = time.time()
 
-def _show(return_text=False):
-    lines = []
-    lines.append("=== TIME PROFILE ===")
-    keys = list(_t.keys())
-    if keys:
-        base = _t[keys[0]]
-        prev = base
-        for k in keys:
-            lines.append(f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)")
-            prev = _t[k]
-    lines.append("====================")
-
-    text = "\n".join(lines)
-
-    if return_text:
-        return text
-    else:
-        print(text)
+    def _show(return_text=False):
+        lines = []
+        lines.append("=== TIME PROFILE ===")
+        keys = list(_t.keys())
+        if keys:
+            base = _t[keys[0]]
+            prev = base
+            for k in keys:
+                lines.append(
+                    f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)"
+                )
+                prev = _t[k]
+        lines.append("====================")
+        text = "\n".join(lines)
+        if return_text:
+            return text
+        else:
+            print(text)
 
     _mark("START")
 
     # ======================================
-    # 기존 코드 시작 — 원본 완전 유지
+    # 기존 로직 그대로 유지
     # ======================================
     mb = MarcBuilder()
     marc_rec = Record(to_unicode=True, force_utf8=True)
@@ -4627,7 +4630,7 @@ def _show(return_text=False):
     CURRENT_DEBUG_LINES = []
     pieces = []
 
-    # 0) 기본 데이터 로딩
+    # 기본 데이터 로딩
     author_raw, _ = fetch_nlk_author_only(isbn)
     _mark("fetch_nlk_author_only")
 
@@ -4664,9 +4667,7 @@ def _show(return_text=False):
     f_246 = mrk_str_to_field(marc246)
 
     mrk_700 = build_700_people_pref_aladin(
-        author_raw,
-        item,
-        origin_lang_code=origin_lang
+        author_raw, item, origin_lang_code=origin_lang
     ) or []
 
     _mark("245_246_700")
@@ -4677,13 +4678,15 @@ def _show(return_text=False):
 
     # 940
     a_out, n = parse_245_a_n(marc245)
-    mrk_940 = build_940_from_title_a(a_out, use_ai=use_ai_940, disable_number_reading=bool(n))
+    mrk_940 = build_940_from_title_a(
+        a_out, use_ai=use_ai_940, disable_number_reading=bool(n)
+    )
 
     _mark("90010_940")
 
-    # ================================
-    # ⭐ 병렬화: 발행지 + 653 GPT + 056-pre-warm
-    # ================================
+    # ======================================
+    # ⭐ 병렬화 (발행지 + 653 + 056 Warm-up)
+    # ======================================
     publisher_raw = (item or {}).get("publisher", "")
     pubdate = (item or {}).get("pubDate", "") or ""
     pubyear = pubdate[:4] if len(pubdate) >= 4 else ""
@@ -4704,11 +4707,11 @@ def _show(return_text=False):
 
         bundle = future_bundle.result()
         tag_653 = future_653.result()
-        _prefetch = future_056_prefetch.result()
+        _ = future_056_prefetch.result()  # warm-up 결과는 사용하지 않음
 
     _mark("parallel_done")
 
-    # DEBUG (원본 유지)
+    # DEBUG 출력 (원본 유지)
     dbg(
         "📍[BUNDLE]",
         f"source={bundle.get('source')}",
@@ -4719,7 +4722,9 @@ def _show(return_text=False):
     for m in (bundle.get("debug") or []):
         dbg("[BUNDLE]", m)
 
+    # ================================
     # 260
+    # ================================
     tag_260 = build_260(
         place_display=bundle["place_display"],
         publisher_name=publisher_raw,
@@ -4727,7 +4732,9 @@ def _show(return_text=False):
     )
     f_260 = mrk_str_to_field(tag_260)
 
+    # ================================
     # 008
+    # ================================
     lang3_override = _lang3_from_tag041(tag_041_text) if tag_041_text else None
 
     data_008 = build_008_from_isbn(
@@ -4744,7 +4751,9 @@ def _show(return_text=False):
     field_008 = Field(tag="008", data=data_008)
     mb.add_ctl("008", data_008)
 
-    # 653 후처리
+    # ================================
+    # 653 (후처리)
+    # ================================
     f_653 = mrk_str_to_field(tag_653) if tag_653 else None
 
     def _normalize_kw_hint(arr):
@@ -4768,7 +4777,9 @@ def _show(return_text=False):
 
     _mark("653_postprocess")
 
+    # ================================
     # 056 (최종 GPT)
+    # ================================
     kdc_code = None
     try:
         kdc_code = get_kdc_from_isbn(
@@ -4788,7 +4799,9 @@ def _show(return_text=False):
 
     _mark("056_final")
 
+    # ================================
     # 490 / 830 / 300 / 950 / 049
+    # ================================
     tag_490, tag_830 = build_490_830_mrk_from_item(item)
     f_490 = mrk_str_to_field(tag_490)
     f_830 = mrk_str_to_field(tag_830)
@@ -4803,25 +4816,30 @@ def _show(return_text=False):
     _mark("rest_fields")
 
     # ================================
-    # 조립
+    # 조립 (원본 로직 그대로 유지)
     # ================================
     pieces.append((field_008, "=008  " + data_008))
 
+    # 020
     tag_020 = _build_020_from_item_and_nlk(isbn, item)
     f_020 = mrk_str_to_field(tag_020)
-    if f_020: pieces.append((f_020, tag_020))
+    if f_020:
+        pieces.append((f_020, tag_020))
 
+    # 020 (set ISBN)
     nlk_extra = fetch_additional_code_from_nlk(isbn)
     set_isbn = nlk_extra.get("set_isbn", "").strip()
     if set_isbn:
         tag_020_1 = f"=020  1\\$a{set_isbn} (set)"
         pieces.append((mrk_str_to_field(tag_020_1), tag_020_1))
 
+    # 041
     if tag_041_text:
         f_041 = mrk_str_to_field(_as_mrk_041(tag_041_text))
         if f_041:
             pieces.append((f_041, _as_mrk_041(tag_041_text)))
 
+    # 그 외 필드
     if f_056: pieces.append((f_056, tag_056))
     if f_245: pieces.append((f_245, marc245))
     if f_246: pieces.append((f_246, marc246))
@@ -4830,33 +4848,52 @@ def _show(return_text=False):
     if f_490: pieces.append((f_490, tag_490))
     if f_653: pieces.append((f_653, tag_653))
 
+    # 700
     for m in mrk_700:
         f = mrk_str_to_field(m)
-        if f: pieces.append((f, m))
+        if f:
+            pieces.append((f, m))
+        else:
+            dbg_err(f"[mrk_str_to_field FAIL] {m}")
 
+    # 90010
     for m in mrk_90010:
         f = mrk_str_to_field(m)
-        if f: pieces.append((f, m))
+        if f:
+            pieces.append((f, m))
 
+    # 940
     for m in mrk_940:
         f = mrk_str_to_field(m)
-        if f: pieces.append((f, m))
+        if f:
+            pieces.append((f, m))
 
-    if f_830: pieces.append((f_830, tag_830))
-    if f_950: pieces.append((f_950, tag_950))
-    if f_049: pieces.append((f_049, field_049))
+    # 830
+    if f_830:
+        pieces.append((f_830, tag_830))
 
+    # 950
+    if f_950:
+        pieces.append((f_950, tag_950))
+
+    # 049
+    if f_049:
+        pieces.append((f_049, field_049))
+
+    # MRK 생성
     mrk_strings = [m for _, m in pieces]
     mrk_text = "\n".join(mrk_strings)
 
     print("===== FINAL MRK TEXT DUMP =====")
     print(mrk_text)
 
-    # 기록 필드 생성
+    # 레코드 생성
     for f, _ in pieces:
         marc_rec.add_field(f)
 
-    # meta (원본과 동일 구조 유지)
+    # ================================
+    # meta (원본 구조 유지)
+    # ================================
     meta = {
         "TitleA": a_out,
         "has_n": bool(n),
@@ -4885,16 +4922,17 @@ def _show(return_text=False):
     print("[DEBUG] tag_300 =", tag_300)
     print("[DEBUG] f_300 =", f_300)
 
-    # ======================================
-    # 타임 프로파일 출력
-    # ======================================
+    _mark("before_final_show")
+
+    # ================================
+    # 콘솔 타임 프로파일 출력
+    # ================================
     _show()
 
-    # ======================================
-    # Streamlit 화면(Time Profile) 출력
-    # ======================================
+    # ================================
+    # Streamlit 화면 출력
+    # ================================
     profile_text = _show(return_text=True)
-
     try:
         import streamlit as st
         st.subheader("⏱️ Time Profile")
@@ -4903,47 +4941,6 @@ def _show(return_text=False):
         pass
 
     return marc_rec, marc_rec.as_marc(), mrk_text, meta
-
-
-def run_and_export(
-    isbn: str,
-    *,
-    reg_mark: str = "",
-    reg_no: str = "",
-    copy_symbol: str = "",
-    use_ai_940: bool = True,
-    save_dir: str = "./output",
-    preview_in_streamlit: bool = True,
-):
-    """
-    네가 쓰는 기존 '원클릭 생성' 함수를 그대로 감싸서
-    - Record → .mrc 바이트 만들고
-    - MRK 텍스트 만들고
-    - 디스크에 둘 다 저장하고
-    - (선택) Streamlit 다운로드 버튼을 노출한다.
-    """
-    record, marc_bytes, mrk_text, meta = generate_all_oneclick(
-        isbn,
-        reg_mark=reg_mark,
-        reg_no=reg_no,
-        copy_symbol=copy_symbol,
-        use_ai_940=use_ai_940,
-    )
-
-    save_marc_files(record, save_dir, isbn)
-
-    if preview_in_streamlit:
-        try:
-            st.success("📦 MRC/MRK 파일이 저장되었습니다.")
-            with st.expander("MRK 미리보기", expanded=True):
-                st.text_area("MRK", mrk_text, height=320)
-            st.download_button("📘 MARC (mrc) 다운로드", data=marc_bytes, file_name=f"{isbn}.mrc", mime="application/marc")
-            st.download_button("🧾 MARC (mrk) 다운로드", data=mrk_text, file_name=f"{isbn}.mrk", mime="text/plain")
-
-        except Exception:
-            pass
-
-    return record, marc_bytes, mrk_text, meta
 
 
 # ========== MRC/MRK Export Helpers ==========
