@@ -4875,15 +4875,14 @@ def run_and_export(
 
     if preview_in_streamlit:
         try:
-             st.success("📦 MRC/MRK 파일이 저장되었습니다.")
-             with st.expander("MRK 미리보기", expanded=True):
+            st.success("📦 MRC/MRK 파일이 저장되었습니다.")
+            with st.expander("MRK 미리보기", expanded=True):
                 st.text_area("MRK", mrk_text, height=320)
-            st.download_button("📘 MARC (mrc) 다운로드", data=marc_bytes,
-                    file_name=f"{isbn}.mrc", mime="application/marc")
-            st.download_button("🧾 MARC (mrk) 다운로드", data=mrk_text,
-                    file_name=f"{isbn}.mrk", mime="text/plain")
+            st.download_button("📘 MARC (mrc) 다운로드", data=marc_bytes, file_name=f"{isbn}.mrc", mime="application/marc")
+            st.download_button("🧾 MARC (mrk) 다운로드", data=mrk_text, file_name=f"{isbn}.mrk", mime="text/plain")
+
         except Exception:
-                pass
+            pass
 
     return record, marc_bytes, mrk_text, meta
 
