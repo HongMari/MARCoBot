@@ -4784,10 +4784,22 @@ def generate_all_oneclick(
 
     # ... 기존 pieces 조립, MRK 문자열 생성, return 부분 동일 ...
 
+    # -----------------------
+    # FINAL MRK BUILD
+    # -----------------------
+    mrk_strings = [m for f, m in pieces]
+    mrk_text = "\n".join(mrk_strings)
 
-    # 최종 반환
+    # -----------------------
+    # FINAL MRC BUILD
+    # -----------------------
+    marc_bytes = marc_rec.as_marc()
+
+    # -----------------------
+    # RETURN
+    # -----------------------
     return marc_rec, marc_bytes, mrk_text, meta
-
+    
 
 # ============================================
 # 📌 run_and_export() — 타임라인 출력 추가 버전
