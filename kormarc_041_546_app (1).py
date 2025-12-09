@@ -4586,30 +4586,34 @@ def build_300_mrk(item: dict) -> str:
 def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_symbol: str = "", use_ai_940: bool = True):
     mb = MarcBuilder()
     marc_rec = Record(to_unicode=True, force_utf8=True)
-    
+
     global CURRENT_DEBUG_LINES
     CURRENT_DEBUG_LINES = []
 
     pieces = []
 
     # ======================================
-    # 0) 기본 데이터 로딩 (NLK / Aladin)
+    # ★ 병렬 그룹 1 — 사전 데이터 로딩 3개
     # ======================================
-    author_raw, _ = fetch_nlk_author_only(isbn)
-    item = fetch_aladin_item(isbn)
+    from concurrent.futures import ThreadPoolExecutor
 
-    # ① 041/546
+    with ThreadPoolExecutor(max_workers=3) as ex1:
+        fut_author = ex1.submit(fetch_nlk_author_only, isbn)
+        fut_item   = ex1.submit(fetch_aladin_item, isbn)
+        fut_kor546 = ex1.submit(get_kormarc_tags, isbn)
+
+        author_raw, _ = fut_author.result()
+        item          = fut_item.result()
+        res           = fut_kor546.result()
+
+    # ① 041 / 546 처리
     tag_041_text = tag_546_text = _orig = None
-    try:
-        res = get_kormarc_tags(isbn)
-        if isinstance(res, (list, tuple)) and len(res) == 3:
-            tag_041_text, tag_546_text, _orig = res
-        if isinstance(tag_041_text, str) and tag_041_text.startswith("📕 예외 발생"):
-            tag_041_text = None
-        if isinstance(tag_546_text, str) and tag_546_text.startswith("📕 예외 발생"):
-            tag_546_text = None
-    except Exception:
+    if isinstance(res, (list, tuple)) and len(res) == 3:
+        tag_041_text, tag_546_text, _orig = res
+
+    if isinstance(tag_041_text, str) and tag_041_text.startswith("📕 예외 발생"):
         tag_041_text = None
+    if isinstance(tag_546_text, str) and tag_546_text.startswith("📕 예외 발생"):
         tag_546_text = None
 
     origin_lang = None
@@ -4626,9 +4630,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     f_246 = mrk_str_to_field(marc246)
 
     mrk_700 = build_700_people_pref_aladin(
-        author_raw,
-        item,
-        origin_lang_code=origin_lang
+        author_raw, item, origin_lang_code=origin_lang
     ) or []
 
     # 90010
@@ -4637,46 +4639,26 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
 
     # 940
     a_out, n = parse_245_a_n(marc245)
-    mrk_940 = build_940_from_title_a(
-        a_out,
-        use_ai=use_ai_940,
-        disable_number_reading=bool(n)
-    )
+    mrk_940 = build_940_from_title_a(a_out, use_ai=use_ai_940, disable_number_reading=bool(n))
 
     # ======================================
-    # ★ 병렬화 대상 3개
-    # 1) 발행지(KPIPA)  2) 653 GPT  3) 056 GPT(전처리)
+    # ★ 병렬 그룹 2 — item 필요 작업 3개
     # ======================================
     publisher_raw = (item or {}).get("publisher", "")
-    pubdate = (item or {}).get("pubDate", "") or ""
+    pubdate = (item or {}).get("pubDate", "")
     pubyear = pubdate[:4] if len(pubdate) >= 4 else ""
 
-    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex2:
+        fut_bundle = ex2.submit(build_pub_location_bundle, isbn, publisher_raw)
+        fut_653    = ex2.submit(_build_653_via_gpt, item)
+        fut_056pre = ex2.submit(get_kdc_from_isbn, isbn, ALADIN_TTB_KEY, openai_key, model, None)
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
+        bundle = fut_bundle.result()
+        tag_653 = fut_653.result()
+        _prefetch = fut_056pre.result()  # 실제로는 사용 안 함
 
-        future_653 = ex.submit(_build_653_via_gpt, item)
-
-        future_056_prefetch = ex.submit(
-            get_kdc_from_isbn,
-            isbn,
-            ALADIN_TTB_KEY,
-            openai_key,
-            model,
-            None  # kw_hint 없음 (워밍업용)
-        )
-
-        # ─ 결과 회수
-        bundle = future_bundle.result()
-        tag_653 = future_653.result()
-        _prefetch = future_056_prefetch.result()   # 실제 사용은 안 함
-
-    # =====================
-    # bundle DEBUG (원본 코드 유지)
-    # =====================
-    dbg(
-        "📍[BUNDLE]",
+    # bundle DEBUG
+    dbg("📍[BUNDLE]",
         f"source={bundle.get('source')}",
         f"place_raw={bundle.get('place_raw')}",
         f"place_display={bundle.get('place_display')}",
@@ -4686,7 +4668,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
         dbg("[BUNDLE]", m)
 
     # ======================================
-    # 260 (병렬 결과 기반)
+    # 260
     # ======================================
     tag_260 = build_260(
         place_display=bundle["place_display"],
@@ -4699,7 +4681,6 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     # 008
     # ======================================
     lang3_override = _lang3_from_tag041(tag_041_text) if tag_041_text else None
-
     data_008 = build_008_from_isbn(
         isbn,
         aladin_pubdate=pubdate,
@@ -4730,19 +4711,17 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     set_isbn = nlk_extra.get("set_isbn", "").strip()
 
     # ======================================
-    # 653 (병렬 결과 후처리)
+    # 653
     # ======================================
     f_653 = mrk_str_to_field(tag_653) if tag_653 else None
 
-    # kw_hint 생성
     def _normalize_kw_hint(arr: list[str]) -> list[str]:
         seen = set()
         out = []
         for w in (arr or []):
             w = (w or "").strip()
             if w and w not in seen:
-                seen.add(w)
-                out.append(w)
+                seen.add(w); out.append(w)
         return sorted(out)[:7]
 
     try:
@@ -4755,7 +4734,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     dbg("653 keywords hint →", kw_hint)
 
     # ======================================
-    # ★ 056 — 기존 로직 그대로 유지 (중요!!)
+    # 056 (최종)
     # ======================================
     kdc_code = None
     try:
@@ -4764,7 +4743,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
             ttbkey=ALADIN_TTB_KEY,
             openai_key=openai_key,
             model=model,
-            keywords_hint=kw_hint
+            keywords_hint=kw_hint,
         )
         if kdc_code and not re.fullmatch(r"\d{1,3}", kdc_code):
             kdc_code = None
@@ -4775,7 +4754,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     f_056 = mrk_str_to_field(tag_056)
 
     # ======================================
-    # 490·830
+    # 490 / 830
     # ======================================
     tag_490, tag_830 = build_490_830_mrk_from_item(item)
     f_490 = mrk_str_to_field(tag_490)
@@ -4802,14 +4781,13 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     # 조립
     # ======================================
     pieces.append((field_008, "=008  " + data_008))
-    if f_020:
-        pieces.append((f_020, tag_020))
+    if f_020: pieces.append((f_020, tag_020))
+
     if set_isbn:
         tag_020_1 = f"=020  1\\$a{set_isbn} (set)"
         pieces.append((mrk_str_to_field(tag_020_1), tag_020_1))
 
     is_translation = bool(tag_041_text and "$h" in tag_041_text)
-
     if is_translation:
         f_041 = mrk_str_to_field(_as_mrk_041(tag_041_text))
         if f_041:
@@ -4825,6 +4803,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
         f_546 = mrk_str_to_field(_as_mrk_546(tag_546_text))
         if f_546:
             pieces.append((f_546, _as_mrk_546(tag_546_text)))
+
     if f_653: pieces.append((f_653, tag_653))
 
     for m in mrk_700:
@@ -4850,9 +4829,6 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
 
     mrk_strings = [m for f, m in pieces]
 
-    # ======================================
-    # DEBUG 출력
-    # ======================================
     print("===== FINAL MRK TEXT DUMP =====")
     print("\n".join(mrk_strings))
 
