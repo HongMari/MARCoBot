@@ -4690,23 +4690,26 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
 
     from concurrent.futures import ThreadPoolExecutor
 
+    from concurrent.futures import ThreadPoolExecutor
+
     # ========================
     # 🔥 병렬 실행 블록 시작
     # ========================
     with ThreadPoolExecutor(max_workers=3) as ex:
-    # ① 206 발행사항: 발행지 검색 (KPIPA/IMPRINT/MCST)
-    future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
     
-    # ② 653 (GPT)
-    future_653 = ex.submit(_build_653_via_gpt, item)
+        # ① 발행지 검색
+        future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
+    
+        # ② 653 (GPT)
+        future_653 = ex.submit(_build_653_via_gpt, item)
 
-    # ③ 056 (GPT, KDC)
-    future_056 = ex.submit(get_kdc_from_isbn, isbn, ALADIN_TTB_KEY, openai_key, model, None   # ← kw_hint는 나중에 2차 호출할 때만 사용)
+        # ③ 056 (GPT / KDC)
+        future_056 = ex.submit(get_kdc_from_isbn, isbn, ALADIN_TTB_KEY, openai_key, model, None,   # kw_hint는 아직 넣지 않음)
 
-    # --- 결과 회수 ---
-    bundle   = future_bundle.result()
-    tag_653  = future_653.result()
-    kdc_code = future_056.result()
+        # --- 결과 회수 ---
+        bundle   = future_bundle.result()
+        tag_653  = future_653.result()
+        kdc_code = future_056.result()
     # ========================
     # 🔥 병렬 실행 블록 끝
     # ========================
