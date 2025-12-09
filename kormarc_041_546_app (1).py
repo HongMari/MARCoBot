@@ -4003,9 +4003,10 @@ def aladin_lookup_by_web(isbn13: str) -> Optional[BookInfo]:
             author=author,
             publisher=publisher,
             pub_date=pub_date,
-            category=cat_text
+            category=cat_text,
             extra={"detail_html": pr.text}
         )
+
     except Exception as e:
         st.error(f"웹 스크레이핑 예외: {e}")
         return None
