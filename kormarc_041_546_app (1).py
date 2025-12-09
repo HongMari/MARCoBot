@@ -4636,6 +4636,57 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     mrk_940 = build_940_from_title_a(a_out, use_ai=use_ai_940, disable_number_reading=bool(n))
 
 
+    from concurrent.futures import ThreadPoolExecutor
+    # ========================
+    # 🔥 병렬 실행 블록 시작
+    # ========================
+    with ThreadPoolExecutor(max_workers=3) as ex:
+    
+        # ① 발행지 검색
+        future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
+    
+        # ② 653 (GPT)
+        future_653 = ex.submit(_build_653_via_gpt, item)
+
+        # ③ 056 (GPT / KDC)
+        future_056 = ex.submit(
+            get_kdc_from_isbn,
+            isbn,
+            ALADIN_TTB_KEY,
+            openai_key,
+            model,
+            None   # kw_hint는 아직 넣지 않음
+        )
+
+        # --- 결과 회수 ---
+        bundle   = future_bundle.result()
+        tag_653  = future_653.result()
+        kdc_code = future_056.result()
+    # ========================
+    # 🔥 병렬 실행 블록 끝
+    # ========================
+
+    # ========================
+    # 병렬 블록 후처리 
+    # ========================
+
+    # 260 필드 — 발행지 검색 bundle 사용
+    tag_260 = build_260(place_display=bundle["place_display"], publisher_name=publisher_raw, pubyear=pubyear,)
+    f_260 = mrk_str_to_field(tag_260)
+    
+    # 653 후처리
+    f_653 = mrk_str_to_field(tag_653) if tag_653 else None
+    kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
+    kw_hint = _normalize_kw_hint(kw_hint_raw)
+
+    # 056 코드(MARC 필드)
+    tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
+    f_056 = mrk_str_to_field(tag_056)
+
+    # ========================
+    # 병렬 블록 후처리 끝
+    # ========================
+
     # ② 008 (041의 $a로 lang3 override)
     title   = (item or {}).get("title","") or ""
     category= (item or {}).get("categoryName","") or ""
@@ -4687,56 +4738,6 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     field_049 = build_049(reg_mark, reg_no, copy_symbol)
     f_049 = mrk_str_to_field(field_049)    
 
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    # ========================
-    # 🔥 병렬 실행 블록 시작
-    # ========================
-    with ThreadPoolExecutor(max_workers=3) as ex:
-    
-        # ① 발행지 검색
-        future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
-    
-        # ② 653 (GPT)
-        future_653 = ex.submit(_build_653_via_gpt, item)
-
-        # ③ 056 (GPT / KDC)
-        future_056 = ex.submit(
-            get_kdc_from_isbn,
-            isbn,
-            ALADIN_TTB_KEY,
-            openai_key,
-            model,
-            None   # kw_hint는 아직 넣지 않음
-        )
-
-        # --- 결과 회수 ---
-        bundle   = future_bundle.result()
-        tag_653  = future_653.result()
-        kdc_code = future_056.result()
-    # ========================
-    # 🔥 병렬 실행 블록 끝
-    # ========================
-
-    # ========================
-    # 병렬 블록 후처리 
-    # ========================
-
-    # 260 필드 — 발행지 검색 bundle 사용
-    tag_260 = build_260(place_display=bundle["place_display"], publisher_name=publisher_raw, pubyear=pubyear,)
-    f_260 = mrk_str_to_field(tag_260)
-    
-    # 653 후처리
-    f_653 = mrk_str_to_field(tag_653) if tag_653 else None
-    kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
-    kw_hint = _normalize_kw_hint(kw_hint_raw)
-
-    # 056 코드(MARC 필드)
-    tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
-    f_056 = mrk_str_to_field(tag_056)
 
     # =====================
     # 순서대로 조립 (MRK 출력 순서 유지)
