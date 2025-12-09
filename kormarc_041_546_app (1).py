@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import quote_plus, urljoin
 from functools import lru_cache
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 
 # 서드파티 라이브러리
 import requests
@@ -4634,31 +4635,8 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     a_out, n = parse_245_a_n(marc245)
     mrk_940 = build_940_from_title_a(a_out, use_ai=use_ai_940, disable_number_reading=bool(n))
 
-    
-    # 260 발행사항
-    publisher_raw = (item or {}).get("publisher", "")          
-    pubdate       = (item or {}).get("pubDate", "") or ""      
-    pubyear       = (pubdate[:4] if len(pubdate) >= 4 else "") 
 
-    bundle = build_pub_location_bundle(isbn, publisher_raw)     
-    dbg(
-        "📍[BUNDLE]",
-        f"source={bundle.get('source')}",
-        f"place_raw={bundle.get('place_raw')}",
-        f"place_display={bundle.get('place_display')}",
-        f"country_code={bundle.get('country_code')}",
-    )
-    for m in (bundle.get("debug") or []):
-        dbg("[BUNDLE]", m)
-
-    tag_260 = build_260(                                      
-        place_display=bundle["place_display"],
-        publisher_name=publisher_raw,
-        pubyear=pubyear,
-    )
-    f_260 = mrk_str_to_field(tag_260)
-
-     # ② 008 (041의 $a로 lang3 override)
+    # ② 008 (041의 $a로 lang3 override)
     title   = (item or {}).get("title","") or ""
     category= (item or {}).get("categoryName","") or ""
     desc    = (item or {}).get("description","") or ""
@@ -4679,6 +4657,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     field_008 = Field(tag='008', data=data_008)
     mb.add_ctl("008", data_008)
 
+
     # ③ 007 (물리적 자료 형태)
     field_007 = Field(tag='007', data='ta')
     pieces.append((field_007, "=007  ta"))
@@ -4690,49 +4669,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     nlk_extra = fetch_additional_code_from_nlk(isbn)
     set_isbn = nlk_extra.get("set_isbn", "").strip()
 
-    # ④ 653 (GPT) — 먼저 생성하여 056에 힌트로 사용
-    tag_653 = _build_653_via_gpt(item)
-    f_653   = mrk_str_to_field(tag_653) if tag_653 else None
-
-    # (내성 확보 + 재현성) 653 → 힌트 추출
-    def _normalize_kw_hint(arr: list[str]) -> list[str]:
-        seen = set(); out = []
-        for w in (arr or []):
-            w = (w or "").strip()
-            if w and w not in seen:
-                seen.add(w); out.append(w)
-        # 사전순 정렬로 입력 순서 잡음 제거 + 최대 7개 제한
-        return sorted(out)[:7]
-
-    try:
-        kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
-        kw_hint = _normalize_kw_hint(kw_hint_raw)
-    except Exception as e:
-        dbg_err(f"653 파싱 실패: {e}")
-        kw_hint = []
-
-    dbg("653 keywords hint →", kw_hint)
-
-    # ★ 056 (KDC) — 알라딘/스크레이핑 + LLM로 숫자만 받아 생성 (653 힌트 주입)
-    kdc_code = None
-    try:
-        kdc_code = get_kdc_from_isbn(
-            isbn,
-            ttbkey=ALADIN_TTB_KEY,
-            openai_key=openai_key,
-            model=model,
-            keywords_hint=kw_hint      # <= 새 인자 전달
-        )
-        # 숫자 포맷 검증(안전)
-        if kdc_code and not re.fullmatch(r"\d{1,3}", kdc_code):
-            kdc_code = None
-    except Exception as e:
-        dbg_err(f"056 생성 중 예외: {e}")
-
-    # $2는 사용하는 판으로 (예: KDC6)
-    tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
-    f_056 = mrk_str_to_field(tag_056)
-
+    
     # 490.830 (총서)
     tag_490, tag_830 = build_490_830_mrk_from_item(item)
     f_490 = mrk_str_to_field(tag_490)
@@ -4751,6 +4688,45 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     f_049 = mrk_str_to_field(field_049)    
 
 
+    from concurrent.futures import ThreadPoolExecutor
+
+    # ========================
+    # 🔥 병렬 실행 블록 시작
+    # ========================
+    with ThreadPoolExecutor(max_workers=3) as ex:
+    # ① 206 발행사항: 발행지 검색 (KPIPA/IMPRINT/MCST)
+    future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
+    
+    # ② 653 (GPT)
+    future_653 = ex.submit(_build_653_via_gpt, item)
+
+    # ③ 056 (GPT, KDC)
+    future_056 = ex.submit(get_kdc_from_isbn, isbn, ALADIN_TTB_KEY, openai_key, model, None   # ← kw_hint는 나중에 2차 호출할 때만 사용)
+
+    # --- 결과 회수 ---
+    bundle   = future_bundle.result()
+    tag_653  = future_653.result()
+    kdc_code = future_056.result()
+    # ========================
+    # 🔥 병렬 실행 블록 끝
+    # ========================
+
+    # ========================
+    # 병렬 블록 후처리 
+    # ========================
+
+    # 260 필드 — 발행지 검색 bundle 사용
+    tag_260 = build_260(place_display=bundle["place_display"], publisher_name=publisher_raw, pubyear=pubyear,)
+    f_260 = mrk_str_to_field(tag_260)
+    
+    # 653 후처리
+    f_653 = mrk_str_to_field(tag_653) if tag_653 else None
+    kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
+    kw_hint = _normalize_kw_hint(kw_hint_raw)
+
+    # 056 코드(MARC 필드)
+    tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
+    f_056 = mrk_str_to_field(tag_056)
 
     # =====================
     # 순서대로 조립 (MRK 출력 순서 유지)
