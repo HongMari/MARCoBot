@@ -4596,17 +4596,24 @@ def generate_all_oneclick(
     def _mark(name):
         _t[name] = time.time()
 
-    def _show():
-        print("\n=== TIME PROFILE ===")
+    def _show(return_text=False):
+        lines = []
+        lines.append("=== TIME PROFILE ===")
         keys = list(_t.keys())
-        if not keys:
-            return
-        base = _t[keys[0]]
-        prev = base
-        for k in keys:
-            print(f"{k:20} : {(_t[k]-prev):.2f}s  (total {(_t[k]-base):.2f}s)")
-            prev = _t[k]
-        print("====================\n")
+        if keys:
+            base = _t[keys[0]]
+            prev = base
+            for k in keys:
+                   lines.append(f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)")
+                prev = _t[k]
+        lines.append("====================")
+
+        text = "\n".join(lines)
+
+        if return_text:
+            return text
+        else:
+            print(text)
 
     _mark("START")
 
@@ -4882,6 +4889,18 @@ def generate_all_oneclick(
     # 타임 프로파일 출력
     # ======================================
     _show()
+
+    # ======================================
+    # Streamlit 화면(Time Profile) 출력
+    # ======================================
+    profile_text = _show(return_text=True)
+
+    try:
+        import streamlit as st
+        st.subheader("⏱️ Time Profile")
+        st.code(profile_text)
+    except:
+        pass
 
     return marc_rec, marc_rec.as_marc(), mrk_text, meta
 
