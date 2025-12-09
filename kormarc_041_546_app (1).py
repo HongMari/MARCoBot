@@ -4886,7 +4886,7 @@ def run_and_export(
                                    file_name=f"{isbn}.mrc", mime="application/marc")
                 st.download_button("🧾 MARC (mrk) 다운로드", data=mrk_text,
                                    file_name=f"{isbn}.mrk", mime="text/plain")
-            except Exception:
+        except Exception:
                 pass
 
     return record, marc_bytes, mrk_text, meta
