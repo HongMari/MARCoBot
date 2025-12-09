@@ -4228,7 +4228,6 @@ def get_kdc_from_isbn(isbn13: str, ttbkey: Optional[str], openai_key: str, model
         return None
     code = ask_llm_for_kdc(info, api_key=openai_key, model=model, keywords_hint=keywords_hint)
     # 디버그용: 어떤 정보를 넘겼는지 보여주기(개인정보 없음)
-    if DEBUG_UI:
         with st.expander("LLM 입력 정보(확인용)"):
             st.json({
                 "title": info.title,
@@ -4802,9 +4801,8 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     mrk_text = "\n".join(mrk_strings)
 
     # --- 디버그 출력 (옵션) ---
-    if DEBUG_UI:
-        print("===== FINAL MRK TEXT DUMP =====")
-        print(mrk_text)
+    print("===== FINAL MRK TEXT DUMP =====")
+    print(mrk_text)
 
         
     # Record 객체 생성
@@ -4839,11 +4837,10 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     marc_bytes = marc_rec.as_marc()       # MRC 파일용 (바이너리)
     
     # --- 디버그 출력 (옵션) ---
-    if DEBUG_UI:
-        print("TAGS:", [f.tag for f in marc_rec.get_fields()])
-        print("MRK HEAD:\n", "\n".join(record_to_mrk_from_record(marc_rec).splitlines()[:10]))
-        print("[DEBUG] tag_300 =", tag_300)
-        print("[DEBUG] f_300 =", f_300)
+    print("TAGS:", [f.tag for f in marc_rec.get_fields()])
+    print("MRK HEAD:\n", "\n".join(record_to_mrk_from_record(marc_rec).splitlines()[:10]))
+    print("[DEBUG] tag_300 =", tag_300)
+    print("[DEBUG] f_300 =", f_300)
 
     _ai940_conn.commit()
 
@@ -4878,14 +4875,13 @@ def run_and_export(
 
     if preview_in_streamlit:
         try:
-            if DEBUG_UI:
-                st.success("📦 MRC/MRK 파일이 저장되었습니다.")
-                with st.expander("MRK 미리보기", expanded=True):
-                    st.text_area("MRK", mrk_text, height=320)
-                st.download_button("📘 MARC (mrc) 다운로드", data=marc_bytes,
-                                   file_name=f"{isbn}.mrc", mime="application/marc")
-                st.download_button("🧾 MARC (mrk) 다운로드", data=mrk_text,
-                                   file_name=f"{isbn}.mrk", mime="text/plain")
+             st.success("📦 MRC/MRK 파일이 저장되었습니다.")
+             with st.expander("MRK 미리보기", expanded=True):
+                st.text_area("MRK", mrk_text, height=320)
+            st.download_button("📘 MARC (mrc) 다운로드", data=marc_bytes,
+                    file_name=f"{isbn}.mrc", mime="application/marc")
+            st.download_button("🧾 MARC (mrk) 다운로드", data=mrk_text,
+                    file_name=f"{isbn}.mrk", mime="text/plain")
         except Exception:
                 pass
 
@@ -5017,7 +5013,6 @@ if submitted:
         st.stop()
 
     # ✅ 여기부터는 네 기존 '변환 실행 버튼 클릭 시' 로직 그대로 복붙
-if DEBUG_UI:
     st.write(f"총 {len(jobs)}건 처리 중…")
     prog = st.progress(0)
 
@@ -5045,7 +5040,6 @@ if DEBUG_UI:
         st.write(f"[DEBUG] MRK length={len(mrk_text)}")
         st.code(mrk_text or "(MRK 생성 실패)", language="text")
 
-    if DEBUG_UI:
         with st.expander(f"🧭 메타 보기 · {isbn}"):
             if meta:
                 safe_meta = {k: v for k, v in meta.items() if k != "debug_lines"}
