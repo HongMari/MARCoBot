@@ -6,9 +6,9 @@ from truepatch_app import generate_all_oneclick as gen_new
 
 TEST_ISBNS = [
     "9788937462849",
-    "9788965746980",
-    "9788954671492",
-    "9791190090011",
+    "9788940649909",
+    "9791171011896",
+    "9791168262409",
 ]
 
 
@@ -58,3 +58,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+
