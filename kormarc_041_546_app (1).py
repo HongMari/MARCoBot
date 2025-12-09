@@ -4584,15 +4584,8 @@ def build_300_mrk(item: dict) -> str:
 
 # =========================================================================================
 def generate_all_oneclick(
-    isbn: str,
-    reg_mark: str = "",
-    reg_no: str = "",
-    copy_symbol: str = "",
-    use_ai_940: bool = True
+    isbn: str, reg_mark: str = "", reg_no: str = "", copy_symbol: str = "", use_ai_940: bool = True
 ):
-    # ======================================
-    # 타임 프로파일러 삽입
-    # ======================================
     import time
     _t = {}
 
@@ -4607,22 +4600,16 @@ def generate_all_oneclick(
             base = _t[keys[0]]
             prev = base
             for k in keys:
-                lines.append(
-                    f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)"
-                )
+                lines.append(f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)")
                 prev = _t[k]
         lines.append("====================")
         text = "\n".join(lines)
         if return_text:
             return text
-        else:
-            print(text)
+        print(text)
 
     _mark("START")
 
-    # ======================================
-    # 기존 로직 그대로 유지
-    # ======================================
     mb = MarcBuilder()
     marc_rec = Record(to_unicode=True, force_utf8=True)
 
@@ -4630,14 +4617,14 @@ def generate_all_oneclick(
     CURRENT_DEBUG_LINES = []
     pieces = []
 
-    # 기본 데이터 로딩
+    # ========== 기본 정보 ==========
     author_raw, _ = fetch_nlk_author_only(isbn)
     _mark("fetch_nlk_author_only")
 
     item = fetch_aladin_item(isbn)
     _mark("fetch_aladin_item")
 
-    # ① 041/546
+    # ========== 041/546 ==========
     tag_041_text = tag_546_text = _orig = None
     try:
         res = get_kormarc_tags(isbn)
@@ -4647,7 +4634,7 @@ def generate_all_oneclick(
             tag_041_text = None
         if isinstance(tag_546_text, str) and tag_546_text.startswith("📕 예외 발생"):
             tag_546_text = None
-    except Exception:
+    except:
         tag_041_text = None
         tag_546_text = None
 
@@ -4659,59 +4646,46 @@ def generate_all_oneclick(
         if m:
             origin_lang = m.group(1).lower()
 
-    # 245 / 246 / 700
+    # ========== 245/246/700 ==========
     marc245 = build_245_with_people_from_sources(item, author_raw, prefer="aladin")
     f_245 = mrk_str_to_field(marc245)
 
     marc246 = build_246_from_aladin_item(item)
     f_246 = mrk_str_to_field(marc246)
 
-    mrk_700 = build_700_people_pref_aladin(
-        author_raw, item, origin_lang_code=origin_lang
-    ) or []
-
+    mrk_700 = build_700_people_pref_aladin(author_raw, item, origin_lang_code=origin_lang) or []
     _mark("245_246_700")
 
-    # 90010
+    # ========== 90010 / 940 ==========
     people = extract_people_from_aladin(item) if item else {}
     mrk_90010 = build_90010_from_wikidata(people, include_translator=False)
 
-    # 940
     a_out, n = parse_245_a_n(marc245)
-    mrk_940 = build_940_from_title_a(
-        a_out, use_ai=use_ai_940, disable_number_reading=bool(n)
-    )
-
+    mrk_940 = build_940_from_title_a(a_out, use_ai=use_ai_940, disable_number_reading=bool(n))
     _mark("90010_940")
 
-    # ======================================
-    # ⭐ 병렬화 (발행지 + 653 + 056 Warm-up)
-    # ======================================
+    # ================================
+    # ⭐ 병렬 실행  (발행지 + 653 + 056-prewarm)
+    # ================================
     publisher_raw = (item or {}).get("publisher", "")
     pubdate = (item or {}).get("pubDate", "") or ""
     pubyear = pubdate[:4] if len(pubdate) >= 4 else ""
 
     from concurrent.futures import ThreadPoolExecutor
-
     with ThreadPoolExecutor(max_workers=3) as ex:
         future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
         future_653 = ex.submit(_build_653_via_gpt, item)
-        future_056_prefetch = ex.submit(
-            get_kdc_from_isbn,
-            isbn,
-            ALADIN_TTB_KEY,
-            openai_key,
-            model,
-            None
-        )
+        future_056_prefetch = ex.submit(get_kdc_from_isbn, isbn, ALADIN_TTB_KEY, openai_key, model, None)
 
         bundle = future_bundle.result()
         tag_653 = future_653.result()
-        _ = future_056_prefetch.result()  # warm-up 결과는 사용하지 않음
+        _ = future_056_prefetch.result()
 
     _mark("parallel_done")
 
-    # DEBUG 출력 (원본 유지)
+    # ================================
+    # 260
+    # ================================
     dbg(
         "📍[BUNDLE]",
         f"source={bundle.get('source')}",
@@ -4722,14 +4696,7 @@ def generate_all_oneclick(
     for m in (bundle.get("debug") or []):
         dbg("[BUNDLE]", m)
 
-    # ================================
-    # 260
-    # ================================
-    tag_260 = build_260(
-        place_display=bundle["place_display"],
-        publisher_name=publisher_raw,
-        pubyear=pubyear,
-    )
+    tag_260 = build_260(bundle["place_display"], publisher_raw, pubyear)
     f_260 = mrk_str_to_field(tag_260)
 
     # ================================
@@ -4740,10 +4707,10 @@ def generate_all_oneclick(
     data_008 = build_008_from_isbn(
         isbn,
         aladin_pubdate=pubdate,
-        aladin_title=(item or {}).get("title", ""),
-        aladin_category=(item or {}).get("categoryName", ""),
-        aladin_desc=(item or {}).get("description", ""),
-        aladin_toc=((item or {}).get("subInfo", {}) or {}).get("toc", ""),
+        aladin_title=item.get("title", ""),
+        aladin_category=item.get("categoryName", ""),
+        aladin_desc=item.get("description", ""),
+        aladin_toc=(item.get("subInfo") or {}).get("toc", ""),
         override_country3=bundle["country_code"],
         override_lang3=lang3_override,
         cataloging_src="a",
@@ -4752,14 +4719,13 @@ def generate_all_oneclick(
     mb.add_ctl("008", data_008)
 
     # ================================
-    # 653 (후처리)
+    # 653 → kw_hint 생성
     # ================================
     f_653 = mrk_str_to_field(tag_653) if tag_653 else None
 
-    def _normalize_kw_hint(arr):
-        s = set()
-        out = []
-        for w in (arr or []):
+    def _normalize(arr):
+        s, out = set(), []
+        for w in arr or []:
             w = (w or "").strip()
             if w and w not in s:
                 s.add(w)
@@ -4767,14 +4733,12 @@ def generate_all_oneclick(
         return sorted(out)[:7]
 
     try:
-        kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
-        kw_hint = _normalize_kw_hint(kw_hint_raw)
-    except Exception as e:
-        dbg_err(f"653 파싱 실패: {e}")
+        kw_raw = _parse_653_keywords(tag_653)
+        kw_hint = _normalize(kw_raw)
+    except:
         kw_hint = []
 
     dbg("653 keywords hint →", kw_hint)
-
     _mark("653_postprocess")
 
     # ================================
@@ -4782,13 +4746,7 @@ def generate_all_oneclick(
     # ================================
     kdc_code = None
     try:
-        kdc_code = get_kdc_from_isbn(
-            isbn,
-            ttbkey=ALADIN_TTB_KEY,
-            openai_key=openai_key,
-            model=model,
-            keywords_hint=kw_hint
-        )
+        kdc_code = get_kdc_from_isbn(isbn, ALADIN_TTB_KEY, openai_key, model, kw_hint)
         if kdc_code and not re.fullmatch(r"\d{1,3}", kdc_code):
             kdc_code = None
     except Exception as e:
@@ -4796,50 +4754,42 @@ def generate_all_oneclick(
 
     tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
     f_056 = mrk_str_to_field(tag_056)
-
     _mark("056_final")
 
     # ================================
-    # 490 / 830 / 300 / 950 / 049
+    # 나머지 필드들
     # ================================
     tag_490, tag_830 = build_490_830_mrk_from_item(item)
-    f_490 = mrk_str_to_field(tag_490)
-    f_830 = mrk_str_to_field(tag_830)
+    f_490, f_830 = mrk_str_to_field(tag_490), mrk_str_to_field(tag_830)
 
     tag_300, f_300 = build_300_from_aladin_detail(item)
-    tag_950 = build_950_from_item_and_price(item, isbn)
+    tag_950, f_950 = build_950_from_item_and_price(item, isbn), None
     f_950 = mrk_str_to_field(tag_950)
 
     field_049 = build_049(reg_mark, reg_no, copy_symbol)
     f_049 = mrk_str_to_field(field_049)
-
     _mark("rest_fields")
 
     # ================================
-    # 조립 (원본 로직 그대로 유지)
+    # 조립 (기존 순서 100% 유지)
     # ================================
     pieces.append((field_008, "=008  " + data_008))
 
-    # 020
     tag_020 = _build_020_from_item_and_nlk(isbn, item)
     f_020 = mrk_str_to_field(tag_020)
     if f_020:
         pieces.append((f_020, tag_020))
 
-    # 020 (set ISBN)
-    nlk_extra = fetch_additional_code_from_nlk(isbn)
-    set_isbn = nlk_extra.get("set_isbn", "").strip()
-    if set_isbn:
-        tag_020_1 = f"=020  1\\$a{set_isbn} (set)"
-        pieces.append((mrk_str_to_field(tag_020_1), tag_020_1))
+    extra = fetch_additional_code_from_nlk(isbn).get("set_isbn", "").strip()
+    if extra:
+        t = f"=020  1\\$a{extra} (set)"
+        pieces.append((mrk_str_to_field(t), t))
 
-    # 041
     if tag_041_text:
-        f_041 = mrk_str_to_field(_as_mrk_041(tag_041_text))
-        if f_041:
-            pieces.append((f_041, _as_mrk_041(tag_041_text)))
+        t = _as_mrk_041(tag_041_text)
+        f = mrk_str_to_field(t)
+        if f: pieces.append((f, t))
 
-    # 그 외 필드
     if f_056: pieces.append((f_056, tag_056))
     if f_245: pieces.append((f_245, marc245))
     if f_246: pieces.append((f_246, marc246))
@@ -4848,57 +4798,45 @@ def generate_all_oneclick(
     if f_490: pieces.append((f_490, tag_490))
     if f_653: pieces.append((f_653, tag_653))
 
-    # 700
     for m in mrk_700:
         f = mrk_str_to_field(m)
-        if f:
-            pieces.append((f, m))
-        else:
-            dbg_err(f"[mrk_str_to_field FAIL] {m}")
+        if f: pieces.append((f, m))
 
-    # 90010
     for m in mrk_90010:
         f = mrk_str_to_field(m)
-        if f:
-            pieces.append((f, m))
+        if f: pieces.append((f, m))
 
-    # 940
     for m in mrk_940:
         f = mrk_str_to_field(m)
-        if f:
-            pieces.append((f, m))
+        if f: pieces.append((f, m))
 
-    # 830
-    if f_830:
-        pieces.append((f_830, tag_830))
+    if f_830: pieces.append((f_830, tag_830))
+    if f_950: pieces.append((f_950, tag_950))
+    if f_049: pieces.append((f_049, field_049))
 
-    # 950
-    if f_950:
-        pieces.append((f_950, tag_950))
-
-    # 049
-    if f_049:
-        pieces.append((f_049, field_049))
-
-    # MRK 생성
-    mrk_strings = [m for _, m in pieces]
-    mrk_text = "\n".join(mrk_strings)
+    mrk_text = "\n".join([m for _, m in pieces])
 
     print("===== FINAL MRK TEXT DUMP =====")
     print(mrk_text)
 
-    # 레코드 생성
     for f, _ in pieces:
         marc_rec.add_field(f)
 
-    # ================================
-    # meta (원본 구조 유지)
-    # ================================
+    _show()
+
+    profile_text = _show(return_text=True)
+    try:
+        import streamlit as st
+        st.subheader("⏱️ Time Profile")
+        st.code(profile_text)
+    except:
+        pass
+
     meta = {
         "TitleA": a_out,
         "has_n": bool(n),
-        "700_count": sum(1 for x in mrk_strings if x.startswith("=700")),
-        "90010_count": sum(1 for x in mrk_strings if x.startswith("=90010")),
+        "700_count": sum(1 for x in mrk_text.splitlines() if x.startswith("=700")),
+        "90010_count": sum(1 for x in mrk_text.splitlines() if x.startswith("=90010")),
         "940_count": len(mrk_940),
         "Candidates": get_candidate_names_for_isbn(isbn),
         "041": tag_041_text,
@@ -4918,29 +4856,40 @@ def generate_all_oneclick(
         "Provenance": {"90010": LAST_PROV_90010},
     }
 
-    print("TAGS:", [f.tag for f in marc_rec.get_fields()])
-    print("[DEBUG] tag_300 =", tag_300)
-    print("[DEBUG] f_300 =", f_300)
-
-    _mark("before_final_show")
-
-    # ================================
-    # 콘솔 타임 프로파일 출력
-    # ================================
-    _show()
-
-    # ================================
-    # Streamlit 화면 출력
-    # ================================
-    profile_text = _show(return_text=True)
-    try:
-        import streamlit as st
-        st.subheader("⏱️ Time Profile")
-        st.code(profile_text)
-    except:
-        pass
-
     return marc_rec, marc_rec.as_marc(), mrk_text, meta
+
+def run_and_export(
+    isbn: str,
+    *,
+    reg_mark: str = "",
+    reg_no: str = "",
+    copy_symbol: str = "",
+    use_ai_940: bool = True,
+    save_dir: str = "./output",
+    preview_in_streamlit: bool = True,
+):
+    record, marc_bytes, mrk_text, meta = generate_all_oneclick(
+        isbn,
+        reg_mark=reg_mark,
+        reg_no=reg_no,
+        copy_symbol=copy_symbol,
+        use_ai_940=use_ai_940,
+    )
+
+    save_marc_files(record, save_dir, isbn)
+
+    if preview_in_streamlit:
+        try:
+            import streamlit as st
+            st.success("📦 MRC/MRK 파일이 저장되었습니다.")
+            with st.expander("MRK 미리보기", expanded=True):
+                st.text_area("MRK", mrk_text, height=320)
+            st.download_button("📘 MARC (mrc) 다운로드", data=marc_bytes, file_name=f"{isbn}.mrc")
+            st.download_button("🧾 MARC (mrk) 다운로드", data=mrk_text, file_name=f"{isbn}.mrk")
+        except:
+            pass
+
+    return record, marc_bytes, mrk_text, meta
 
 
 # ========== MRC/MRK Export Helpers ==========
