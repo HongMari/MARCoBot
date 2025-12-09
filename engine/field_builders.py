@@ -1543,3 +1543,358 @@ def build_653_pipeline(item: dict):
     kws_hint = normalize_653_keywords_for_hint(kws_raw)
 
     return tag_653, kws_hint
+# ==========================================================
+# 가격 추출 헬퍼 - 원본 로직 100% 동일
+# ==========================================================
+
+def extract_price_kr(item: dict, isbn: str) -> str:
+    """
+    원본: _extract_price_kr()
+    1) 알라딘 priceStandard
+    2) 없으면 알라딘 상세 페이지 크롤링 가격
+    3) 숫자만 남기기
+    """
+    raw = str((item or {}).get("priceStandard", "") or "").strip()
+
+    # 2) priceStandard 없으면 크롤링 백업
+    if not raw:
+        try:
+            crawl = crawl_aladin_original_and_price(isbn) or {}
+            raw = crawl.get("price", "").strip()
+        except Exception:
+            raw = ""
+
+    # 3) 숫자만 남기기
+    digits = re.sub(r"[^\d]", "", raw)
+    return digits
+# ==========================================================
+# 020 생성기 - 원본 _build_020_from_item_and_nlk 완전 재현
+# ==========================================================
+
+def build_020_field(isbn: str, item: dict) -> str:
+    """
+    ISBN + 부가기호 + 가격을 포함한 020 생성.
+    원본 _build_020_from_item_and_nlk()의 논리를 각각 분리해서 재현.
+    """
+    # 1) 알라딘 가격
+    price = str((item or {}).get("priceStandard", "") or "").strip()
+
+    # 2) NLK에서 add_code, set_isbn, price 가져오기
+    try:
+        nlk_extra = fetch_additional_code_from_nlk(isbn) or {}
+        add_code = nlk_extra.get("add_code", "")
+        price_from_nlk = nlk_extra.get("price", "")
+    except Exception:
+        add_code = ""
+        price_from_nlk = ""
+
+    # 3) 가격 우선순위
+    final_price = price or price_from_nlk
+
+    # 4) 문자열 조립
+    parts = [f"=020  \\\\$a{isbn}"]
+    
+    if add_code:
+        parts.append(f"$g{add_code}")
+
+    if final_price:
+        # 원본처럼 ':' 뒤에 $c 숫자만
+        parts.append(f":$c{final_price}")
+
+    return "".join(parts)
+# ==========================================================
+# SET ISBN 020 생성기
+# ==========================================================
+
+def build_020_set_field(set_isbn: str | None) -> str | None:
+    if not set_isbn:
+        return None
+    return f"=020  1\\$a{set_isbn} (set)"
+# ==========================================================
+# 950 생성기 - 원본 build_950_from_item_and_price
+# ==========================================================
+
+def build_950_field(item: dict, isbn: str) -> str | None:
+    """
+    가격이 없으면 생성하지 않음.
+    """
+    price = extract_price_kr(item, isbn)
+    if not price:
+        return None
+
+    # 원본처럼 역슬래시 유지
+    return f"=950  0\\$b\\{price}"
+# ==========================================================
+# 020 + 950 전체 파이프라인
+# ==========================================================
+
+def build_price_related_fields(isbn: str, item: dict):
+    """
+    결과:
+      - tag_020
+      - tag_020_set (optional)
+      - tag_950 (optional)
+      - set_isbn (for metadata)
+    """
+    tag_020 = build_020_field(isbn, item)
+
+    # SET ISBN (부가기호 API)
+    nlk_info = fetch_additional_code_from_nlk(isbn)
+    set_isbn = (nlk_info or {}).get("set_isbn", "").strip()
+    tag_020_set = build_020_set_field(set_isbn)
+
+    # 950 (가격만)
+    tag_950 = build_950_field(item, isbn)
+
+    return tag_020, tag_020_set, tag_950, set_isbn
+# ==========================================================
+# 지역명 정규화 + 발행국(나라코드) 찾기
+# 원본 get_country_code_by_region() 100% 복원 + 구조화
+# ==========================================================
+
+def normalize_region_for_country_code(region: str) -> str:
+    """
+    원본: get_country_code_by_region 내부 normalize 전략 분리
+    전라남도 → 전남 / 경상북도 → 경북 / 서울특별시 → 서울
+    """
+    if not region:
+        return ""
+
+    region = region.strip()
+
+    # 전라/충청/경상 계열 처리
+    if region.startswith(("전라", "충청", "경상")):
+        if len(region) >= 3:
+            return region[0] + region[2]   # 전라남도 → 전남
+        return region[:2]
+
+    # 서울특별시 → 서울
+    return region[:2]
+
+
+def get_country_code_by_region(region_name: str, region_df) -> str:
+    """
+    지역명을 기반으로 008 발행국 코드(3자리)를 반환.
+    region_df: Google Sheet "발행국명–발행국부호" 시트.
+    """
+    try:
+        target = normalize_region_for_country_code(region_name)
+
+        for _, row in region_df.iterrows():
+            sheet_region = normalize_region_for_country_code(row["발행국"])
+            if sheet_region == target:
+                return (row["발행국 부호"] or "   ").strip()
+
+        return "   "  # fallback: 공백 3칸
+    except Exception:
+        return "   "
+# ==========================================================
+# KPIPA ISBN 검색: 출판사명 / 임프린트 추출
+# 원본 get_publisher_name_from_isbn_kpipa 완전 복원
+# ==========================================================
+
+def fetch_kpipa_publisher_info(isbn: str):
+    url = "https://bnk.kpipa.or.kr/home/v3/addition/search"
+    params = {
+        "ST": isbn,
+        "PG": 1,
+        "PG2": 1,
+        "DSF": "Y",
+        "SO": "weight",
+        "DT": "A",
+    }
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    def norm(name):
+        return re.sub(
+            r"\s|\(.*?\)|주식회사|㈜|도서출판|출판사|프레스",
+            "",
+            (name or ""),
+            flags=re.IGNORECASE
+        ).lower()
+
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=15)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        # 검색 결과 1건
+        first = soup.select_one("a.book-grid-item")
+        if not first:
+            return None, None, "❌ KPIPA 검색 결과 없음"
+
+        detail = "https://bnk.kpipa.or.kr" + first["href"]
+        dres = requests.get(detail, headers=headers, timeout=15)
+        dres.raise_for_status()
+        dsoup = BeautifulSoup(dres.text, "html.parser")
+
+        tag = dsoup.find("dt", string="출판사 / 임프린트")
+        if not tag:
+            return None, None, "❌ KPIPA '출판사 / 임프린트' 항목 없음"
+
+        dd = tag.find_next_sibling("dd")
+        if not dd:
+            return None, None, "❌ KPIPA dd 태그 없음"
+
+        full = dd.get_text(strip=True)
+        main = full.split("/")[0].strip()
+
+        return full, norm(main), None  # (전체텍스트, 대표출판사명(정규화), 오류)
+    except Exception as e:
+        return None, None, f"❌ KPIPA 예외: {e}"
+# ==========================================================
+# KPIPA 출판사 DB 매칭 (원본 search_publisher_location_with_alias)
+# ==========================================================
+
+def locate_publisher_in_kpipa_db(name: str, publisher_df):
+    """
+    publisher_df: ['출판사명', '주소']
+    """
+    debug = []
+    if not name:
+        return "출판지 미상", ["❌ 입력된 출판사명이 없음"]
+
+    norm_name = normalize_publisher_name(name)
+    candidates = publisher_df[publisher_df["출판사명"].apply(
+        lambda x: normalize_publisher_name(x) == norm_name
+    )]
+
+    if not candidates.empty:
+        addr = candidates.iloc[0]["주소"]
+        debug.append(f"✓ KPIPA DB 매칭 성공: {name} → {addr}")
+        return addr, debug
+    else:
+        debug.append(f"❌ KPIPA DB 매칭 실패: {name}")
+        return "출판지 미상", debug
+# ==========================================================
+# IMPRINT fallback (원본 find_main_publisher_from_imprints)
+# ==========================================================
+
+def find_imprint_parent_publisher(rep_name, imprint_df, publisher_df):
+    norm_rep = normalize_publisher_name(rep_name)
+    debug = []
+
+    for full in imprint_df["임프린트"]:
+        if "/" in full:
+            main, imp = [x.strip() for x in full.split("/", 1)]
+        else:
+            main, imp = full.strip(), None
+
+        if imp and normalize_publisher_name(imp) == norm_rep:
+            addr, dbg2 = locate_publisher_in_kpipa_db(main, publisher_df)
+            debug.extend(dbg2)
+            if addr and addr not in ("출판지 미상", None):
+                return addr, debug
+
+    debug.append(f"❌ IMPRINT 매칭 실패: {rep_name}")
+    return None, debug
+# ==========================================================
+# 문체부 도서등록부 검색 (원본 get_mcst_address 완전 복원)
+# ==========================================================
+
+def search_mcst_publisher_address(name: str):
+    url = "https://book.mcst.go.kr/html/searchList.php"
+    params = {
+        "search_area": "전체",
+        "search_state": "1",
+        "search_kind": "1",
+        "search_type": "1",
+        "search_word": name,
+    }
+    debug = []
+
+    try:
+        res = requests.get(url, params=params, timeout=15)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        rows = []
+        for tr in soup.select("table.board tbody tr"):
+            tds = tr.find_all("td")
+            if len(tds) >= 4:
+                reg_type = tds[0].get_text(strip=True)
+                nm = tds[1].get_text(strip=True)
+                addr = tds[2].get_text(strip=True)
+                status = tds[3].get_text(strip=True)
+                if status == "영업":
+                    rows.append((nm, addr))
+
+        if rows:
+            debug.append("✓ 문체부 검색 성공")
+            return rows[0][1], rows, debug
+
+        debug.append("❌ 문체부 검색 결과 없음")
+        return "미확인", [], debug
+
+    except Exception as
+# ==========================================================
+# 최종 발행지 결정 파이프라인 - 원본 100% 재현
+# ==========================================================
+
+def resolve_publisher_location(isbn, publisher_raw, publisher_df, region_df, imprint_df):
+    debug = []
+    debug.append("✓ Google Sheet DB 로드 완료")
+
+    # 1) KPIPA ISBN 검색
+    kpipa_full, kpipa_norm, err = fetch_kpipa_publisher_info(isbn)
+    if err:
+        debug.append(f"KPIPA 검색: {err}")
+
+    # 대표 출판사명 추정
+    rep_name, aliases = split_publisher_aliases(
+        kpipa_full or publisher_raw or ""
+    )
+    resolved_name = rep_name or publisher_raw or ""
+    debug.append(f"대표 출판사명 추정: {resolved_name} / 별칭: {aliases}")
+
+    # 2) KPIPA DB 매칭
+    place_raw, dbg2 = locate_publisher_in_kpipa_db(resolved_name, publisher_df)
+    debug.extend(dbg2)
+    source = "KPIPA_DB"
+
+    # 3) imprint fallback
+    if place_raw in ("출판지 미상", None, "예외 발생"):
+        imp_addr, dbg3 = find_imprint_parent_publisher(resolved_name, imprint_df, publisher_df)
+        debug.extend(dbg3)
+        if imp_addr:
+            place_raw = imp_addr
+            source = "IMPRINT→KPIPA"
+
+    # 4) 문체부 fallback
+    if not place_raw or place_raw in ("출판지 미상", "미확인", "예외 발생"):
+        mcst_addr, _, dbg4 = search_mcst_publisher_address(resolved_name)
+        debug.extend(dbg4)
+        if mcst_addr not in ("미확인", "오류 발생"):
+            place_raw = mcst_addr
+            source = "MCST"
+
+    # 5) 최종 실패 → 출판지 미상
+    if not place_raw or place_raw in ("미확인", "오류 발생", None):
+        place_raw = "출판지 미상"
+        source = "FALLBACK"
+        debug.append("⚠ 모든 경로 실패 → '출판지 미상'")
+
+    # 화면 표시용
+    place_display = normalize_publisher_location_for_display(place_raw)
+
+    # 008용 country code
+    country_code = get_country_code_by_region(place_raw, region_df)
+
+    return {
+        "place_raw": place_raw,
+        "place_display": place_display,
+        "country_code": country_code,
+        "resolved_publisher": resolved_name,
+        "source": source,
+        "debug": debug,
+    }
+# ==========================================================
+# 260 생성기 - 원본 build_260 완전 복원
+# ==========================================================
+
+def build_260_field(place_display: str, publisher: str, pubyear: str) -> str:
+    place = place_display or "발행지 미상"
+    pub = publisher or "발행처 미상"
+    year = pubyear or "발행년 미상"
+
+    return f"=260  \\\\$a{place} :$b{pub},$c{year}"
