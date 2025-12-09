@@ -4228,16 +4228,16 @@ def get_kdc_from_isbn(isbn13: str, ttbkey: Optional[str], openai_key: str, model
         return None
     code = ask_llm_for_kdc(info, api_key=openai_key, model=model, keywords_hint=keywords_hint)
     # 디버그용: 어떤 정보를 넘겼는지 보여주기(개인정보 없음)
-        with st.expander("LLM 입력 정보(확인용)"):
-            st.json({
-                "title": info.title,
-                "author": info.author,
-                "publisher": info.publisher,
-                "pub_date": info.pub_date,
-                "isbn13": info.isbn13,
-                "category": info.category,
-                "description": (info.description[:600] + "…") if info.description and len(info.description) > 600 else info.description,
-                "toc": info.toc,
+    with st.expander("LLM 입력 정보(확인용)"):
+        st.json({
+            title": info.title,
+            "author": info.author,
+            "publisher": info.publisher,
+            "pub_date": info.pub_date,
+            "isbn13": info.isbn13,
+            "category": info.category,
+            "description": (info.description[:600] + "…") if info.description and len(info.description) > 600 else info.description,
+            "toc": info.toc,
             })
     return code
 
