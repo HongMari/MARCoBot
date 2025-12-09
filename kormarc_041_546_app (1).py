@@ -4596,24 +4596,24 @@ def generate_all_oneclick(
     def _mark(name):
         _t[name] = time.time()
 
-    def _show(return_text=False):
-        lines = []
-        lines.append("=== TIME PROFILE ===")
-        keys = list(_t.keys())
-        if keys:
-            base = _t[keys[0]]
-            prev = base
-            for k in keys:
-                   lines.append(f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)")
-                prev = _t[k]
-        lines.append("====================")
+def _show(return_text=False):
+    lines = []
+    lines.append("=== TIME PROFILE ===")
+    keys = list(_t.keys())
+    if keys:
+        base = _t[keys[0]]
+        prev = base
+        for k in keys:
+            lines.append(f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)")
+            prev = _t[k]
+    lines.append("====================")
 
-        text = "\n".join(lines)
+    text = "\n".join(lines)
 
-        if return_text:
-            return text
-        else:
-            print(text)
+    if return_text:
+        return text
+    else:
+        print(text)
 
     _mark("START")
 
