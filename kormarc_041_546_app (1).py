@@ -4584,25 +4584,26 @@ def build_300_mrk(item: dict) -> str:
 # =========================================================================================
 
 def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_symbol: str = "", use_ai_940: bool = True):
-    mb = MarcBuilder()       # ✅ 단일 소스(Record+MRK)
+    mb = MarcBuilder()
     marc_rec = Record(to_unicode=True, force_utf8=True)
-    meta = {"sources": {}, "notes": [], "provenance": {}}
     
     global CURRENT_DEBUG_LINES
     CURRENT_DEBUG_LINES = []
 
     pieces = []
-    
+
+    # ======================================
+    # 0) 기본 데이터 로딩 (NLK / Aladin)
+    # ======================================
     author_raw, _ = fetch_nlk_author_only(isbn)
     item = fetch_aladin_item(isbn)
 
-    # ① 041/546 (네 최종 get_kormarc_tags 사용)
+    # ① 041/546
     tag_041_text = tag_546_text = _orig = None
     try:
-        res = get_kormarc_tags(isbn)  # (tag_041:str, tag_546_text:str, original_title:str) 기대
+        res = get_kormarc_tags(isbn)
         if isinstance(res, (list, tuple)) and len(res) == 3:
             tag_041_text, tag_546_text, _orig = res
-        # 알라딘/크롤링 예외 시 "📕 예외 발생:" 같은 문자열이 올 수도 있으니 방어
         if isinstance(tag_041_text, str) and tag_041_text.startswith("📕 예외 발생"):
             tag_041_text = None
         if isinstance(tag_546_text, str) and tag_546_text.startswith("📕 예외 발생"):
@@ -4610,6 +4611,7 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     except Exception:
         tag_041_text = None
         tag_546_text = None
+
     origin_lang = None
     if tag_041_text:
         m = re.search(r"\$h([a-z]{3})", tag_041_text, re.IGNORECASE)
@@ -4619,142 +4621,200 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
     # 245 / 246 / 700
     marc245 = build_245_with_people_from_sources(item, author_raw, prefer="aladin")
     f_245 = mrk_str_to_field(marc245)
+
     marc246 = build_246_from_aladin_item(item)
     f_246 = mrk_str_to_field(marc246)
+
     mrk_700 = build_700_people_pref_aladin(
         author_raw,
         item,
         origin_lang_code=origin_lang
     ) or []
 
-    # 90010: LOD에서 원어명 가져오기 (지은이, 옮긴이 제외)
+    # 90010
     people = extract_people_from_aladin(item) if item else {}
     mrk_90010 = build_90010_from_wikidata(people, include_translator=False)
 
-    # 940: 245 $a만으로 생성, $n 있으면 숫자 읽기 금지
+    # 940
     a_out, n = parse_245_a_n(marc245)
-    mrk_940 = build_940_from_title_a(a_out, use_ai=use_ai_940, disable_number_reading=bool(n))
+    mrk_940 = build_940_from_title_a(
+        a_out,
+        use_ai=use_ai_940,
+        disable_number_reading=bool(n)
+    )
 
+    # ======================================
+    # ★ 병렬화 대상 3개
+    # 1) 발행지(KPIPA)  2) 653 GPT  3) 056 GPT(전처리)
+    # ======================================
+    publisher_raw = (item or {}).get("publisher", "")
+    pubdate = (item or {}).get("pubDate", "") or ""
+    pubyear = pubdate[:4] if len(pubdate) >= 4 else ""
 
     from concurrent.futures import ThreadPoolExecutor
-    # ========================
-    # 🔥 병렬 실행 블록 시작
-    # ========================
+
     with ThreadPoolExecutor(max_workers=3) as ex:
-    
-        # ① 발행지 검색
         future_bundle = ex.submit(build_pub_location_bundle, isbn, publisher_raw)
-    
-        # ② 653 (GPT)
+
         future_653 = ex.submit(_build_653_via_gpt, item)
 
-        # ③ 056 (GPT / KDC)
-        future_056 = ex.submit(
+        future_056_prefetch = ex.submit(
             get_kdc_from_isbn,
             isbn,
             ALADIN_TTB_KEY,
             openai_key,
             model,
-            None   # kw_hint는 아직 넣지 않음
+            None  # kw_hint 없음 (워밍업용)
         )
 
-        # --- 결과 회수 ---
-        bundle   = future_bundle.result()
-        tag_653  = future_653.result()
-        kdc_code = future_056.result()
-    # ========================
-    # 🔥 병렬 실행 블록 끝
-    # ========================
+        # ─ 결과 회수
+        bundle = future_bundle.result()
+        tag_653 = future_653.result()
+        _prefetch = future_056_prefetch.result()   # 실제 사용은 안 함
 
-    # ========================
-    # 병렬 블록 후처리 
-    # ========================
+    # =====================
+    # bundle DEBUG (원본 코드 유지)
+    # =====================
+    dbg(
+        "📍[BUNDLE]",
+        f"source={bundle.get('source')}",
+        f"place_raw={bundle.get('place_raw')}",
+        f"place_display={bundle.get('place_display')}",
+        f"country_code={bundle.get('country_code')}",
+    )
+    for m in (bundle.get("debug") or []):
+        dbg("[BUNDLE]", m)
 
-    # 260 필드 — 발행지 검색 bundle 사용
-    tag_260 = build_260(place_display=bundle["place_display"], publisher_name=publisher_raw, pubyear=pubyear,)
+    # ======================================
+    # 260 (병렬 결과 기반)
+    # ======================================
+    tag_260 = build_260(
+        place_display=bundle["place_display"],
+        publisher_name=publisher_raw,
+        pubyear=pubyear,
+    )
     f_260 = mrk_str_to_field(tag_260)
-    
-    # 653 후처리
-    f_653 = mrk_str_to_field(tag_653) if tag_653 else None
-    kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
-    kw_hint = _normalize_kw_hint(kw_hint_raw)
 
-    # 056 코드(MARC 필드)
-    tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
-    f_056 = mrk_str_to_field(tag_056)
-
-    # ========================
-    # 병렬 블록 후처리 끝
-    # ========================
-
-    # ② 008 (041의 $a로 lang3 override)
-    title   = (item or {}).get("title","") or ""
-    category= (item or {}).get("categoryName","") or ""
-    desc    = (item or {}).get("description","") or ""
-    toc     = ((item or {}).get("subInfo",{}) or {}).get("toc","") or ""
+    # ======================================
+    # 008
+    # ======================================
     lang3_override = _lang3_from_tag041(tag_041_text) if tag_041_text else None
-    
+
     data_008 = build_008_from_isbn(
         isbn,
-        aladin_pubdate=(item or {}).get("pubDate","") or "",
-        aladin_title=(item or {}).get("title","") or "",
-        aladin_category=(item or {}).get("categoryName","") or "",
-        aladin_desc=(item or {}).get("description","") or "",
-        aladin_toc=((item or {}).get("subInfo",{}) or {}).get("toc","") or "",
-        override_country3=bundle["country_code"],   # ✅ KPIPA DB 기반 country3
+        aladin_pubdate=pubdate,
+        aladin_title=(item or {}).get("title", ""),
+        aladin_category=(item or {}).get("categoryName", ""),
+        aladin_desc=(item or {}).get("description", ""),
+        aladin_toc=((item or {}).get("subInfo", {}) or {}).get("toc", ""),
+        override_country3=bundle["country_code"],
         override_lang3=lang3_override,
         cataloging_src="a",
     )
-    field_008 = Field(tag='008', data=data_008)
+    field_008 = Field(tag="008", data=data_008)
     mb.add_ctl("008", data_008)
 
-
-    # ③ 007 (물리적 자료 형태)
-    field_007 = Field(tag='007', data='ta')
+    # ======================================
+    # 007
+    # ======================================
+    field_007 = Field(tag="007", data="ta")
     pieces.append((field_007, "=007  ta"))
-    
 
-    # ③ 020 (가격 + NLK 부가기호) + 0201 set_isbn
+    # ======================================
+    # 020
+    # ======================================
     tag_020 = _build_020_from_item_and_nlk(isbn, item)
     f_020 = mrk_str_to_field(tag_020)
+
     nlk_extra = fetch_additional_code_from_nlk(isbn)
     set_isbn = nlk_extra.get("set_isbn", "").strip()
 
-    
-    # 490.830 (총서)
+    # ======================================
+    # 653 (병렬 결과 후처리)
+    # ======================================
+    f_653 = mrk_str_to_field(tag_653) if tag_653 else None
+
+    # kw_hint 생성
+    def _normalize_kw_hint(arr: list[str]) -> list[str]:
+        seen = set()
+        out = []
+        for w in (arr or []):
+            w = (w or "").strip()
+            if w and w not in seen:
+                seen.add(w)
+                out.append(w)
+        return sorted(out)[:7]
+
+    try:
+        kw_hint_raw = _parse_653_keywords(tag_653) if tag_653 else []
+        kw_hint = _normalize_kw_hint(kw_hint_raw)
+    except Exception as e:
+        dbg_err(f"653 파싱 실패: {e}")
+        kw_hint = []
+
+    dbg("653 keywords hint →", kw_hint)
+
+    # ======================================
+    # ★ 056 — 기존 로직 그대로 유지 (중요!!)
+    # ======================================
+    kdc_code = None
+    try:
+        kdc_code = get_kdc_from_isbn(
+            isbn,
+            ttbkey=ALADIN_TTB_KEY,
+            openai_key=openai_key,
+            model=model,
+            keywords_hint=kw_hint
+        )
+        if kdc_code and not re.fullmatch(r"\d{1,3}", kdc_code):
+            kdc_code = None
+    except Exception as e:
+        dbg_err(f"056 생성 중 예외: {e}")
+
+    tag_056 = f"=056  \\\\$a{kdc_code}$26" if kdc_code else None
+    f_056 = mrk_str_to_field(tag_056)
+
+    # ======================================
+    # 490·830
+    # ======================================
     tag_490, tag_830 = build_490_830_mrk_from_item(item)
     f_490 = mrk_str_to_field(tag_490)
     f_830 = mrk_str_to_field(tag_830)
 
-    # ③ 300 (형태사항)
+    # ======================================
+    # 300
+    # ======================================
     tag_300, f_300 = build_300_from_aladin_detail(item)
 
-    
-    # 950 (가격만 따로 생성)
+    # ======================================
+    # 950
+    # ======================================
     tag_950 = build_950_from_item_and_price(item, isbn)
     f_950 = mrk_str_to_field(tag_950)
-    
+
+    # ======================================
     # 049
+    # ======================================
     field_049 = build_049(reg_mark, reg_no, copy_symbol)
-    f_049 = mrk_str_to_field(field_049)    
+    f_049 = mrk_str_to_field(field_049)
 
-
-    # =====================
-    # 순서대로 조립 (MRK 출력 순서 유지)
-    # ====================
+    # ======================================
+    # 조립
+    # ======================================
     pieces.append((field_008, "=008  " + data_008))
-    if f_020: pieces.append((f_020, tag_020))
+    if f_020:
+        pieces.append((f_020, tag_020))
     if set_isbn:
         tag_020_1 = f"=020  1\\$a{set_isbn} (set)"
-        f_020_1 = mrk_str_to_field(tag_020_1)
-        pieces.append((f_020_1, tag_020_1))
+        pieces.append((mrk_str_to_field(tag_020_1), tag_020_1))
+
     is_translation = bool(tag_041_text and "$h" in tag_041_text)
 
     if is_translation:
-        # 041
         f_041 = mrk_str_to_field(_as_mrk_041(tag_041_text))
         if f_041:
             pieces.append((f_041, _as_mrk_041(tag_041_text)))
+
     if f_056: pieces.append((f_056, tag_056))
     if f_245: pieces.append((f_245, marc245))
     if f_246: pieces.append((f_246, marc246))
@@ -4766,37 +4826,39 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
         if f_546:
             pieces.append((f_546, _as_mrk_546(tag_546_text)))
     if f_653: pieces.append((f_653, tag_653))
+
     for m in mrk_700:
         f = mrk_str_to_field(m)
-        if not f:
-            dbg_err(f"[mrk_str_to_field FAIL] {m}")
-        else:
+        if f:
             pieces.append((f, m))
+        else:
+            dbg_err(f"[mrk_str_to_field FAIL] {m}")
+
     for m in mrk_90010:
         f = mrk_str_to_field(m)
-        if f: pieces.append((f, m))
+        if f:
+            pieces.append((f, m))
+
     for m in mrk_940:
         f = mrk_str_to_field(m)
-        if f: pieces.append((f, m))
+        if f:
+            pieces.append((f, m))
+
     if f_830: pieces.append((f_830, tag_830))
     if f_950: pieces.append((f_950, tag_950))
     if f_049: pieces.append((f_049, field_049))
 
     mrk_strings = [m for f, m in pieces]
 
-# ⚠️ 여기서 700 정렬 함수 잠깐 빼고 직접 조인해봐
-    mrk_text = "\n".join(mrk_strings)
-
-    # --- 디버그 출력 (옵션) ---
+    # ======================================
+    # DEBUG 출력
+    # ======================================
     print("===== FINAL MRK TEXT DUMP =====")
-    print(mrk_text)
+    print("\n".join(mrk_strings))
 
-        
-    # Record 객체 생성
     for f, _ in pieces:
         marc_rec.add_field(f)
 
-    # 메타정보
     meta = {
         "TitleA": a_out,
         "has_n": bool(n),
@@ -4821,17 +4883,12 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
         "Provenance": {"90010": LAST_PROV_90010},
     }
 
-    marc_bytes = marc_rec.as_marc()       # MRC 파일용 (바이너리)
-    
-    # --- 디버그 출력 (옵션) ---
     print("TAGS:", [f.tag for f in marc_rec.get_fields()])
     print("MRK HEAD:\n", "\n".join(record_to_mrk_from_record(marc_rec).splitlines()[:10]))
     print("[DEBUG] tag_300 =", tag_300)
     print("[DEBUG] f_300 =", f_300)
 
-    _ai940_conn.commit()
-
-    return marc_rec, marc_bytes, mrk_text, meta
+    return marc_rec, marc_rec.as_marc(), "\n".join(mrk_strings), meta
 
 def run_and_export(
     isbn: str,
