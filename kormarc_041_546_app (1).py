@@ -4230,7 +4230,7 @@ def get_kdc_from_isbn(isbn13: str, ttbkey: Optional[str], openai_key: str, model
     # 디버그용: 어떤 정보를 넘겼는지 보여주기(개인정보 없음)
     with st.expander("LLM 입력 정보(확인용)"):
         st.json({
-            title": info.title,
+            "title": info.title,
             "author": info.author,
             "publisher": info.publisher,
             "pub_date": info.pub_date,
@@ -4239,7 +4239,7 @@ def get_kdc_from_isbn(isbn13: str, ttbkey: Optional[str], openai_key: str, model
             "description": (info.description[:600] + "…") if info.description and len(info.description) > 600 else info.description,
             "toc": info.toc,
             })
-    return code
+return code
 
 # (김: 추가) mrc 파일 생성 (객체변환)
 def mrk_str_to_field(line):
