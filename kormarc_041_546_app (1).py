@@ -5096,67 +5096,6 @@ def save_marc_files(record: Record, save_dir: str, base_filename: str):
     return mrc_path, mrk_path
 
 
-# =====================================================================
-# STREAMLIT UI — 원본 기반 복원
-# =====================================================================
-import streamlit as st
-
-st.header("📚 ISBN → MARC (일괄 처리 지원)")
-st.checkbox("🧠 940 생성에 OpenAI 활용", value=True, key="opt_use_ai_940")
-
-with st.form(key="isbn_form", clear_on_submit=False):
-    st.text_input("🔹 단일 ISBN", placeholder="예: 9788937462849", key="single_isbn_input")
-    st.file_uploader(
-        "📁 CSV 업로드 (UTF-8, 열: ISBN, 등록기호, 등록번호, 별치기호)",
-        type=["csv"],
-        key="csv_uploader"
-    )
-    submitted = st.form_submit_button("🚀 변환 실행", use_container_width=True)
-
-if submitted:
-    single_isbn = (st.session_state.get("single_isbn_input") or "").strip()
-    uploaded = st.session_state.get("csv_uploader")
-
-    jobs = []
-    if single_isbn:
-        jobs.append([single_isbn, "", "", ""])
-
-    if uploaded is not None:
-        try:
-            df = load_uploaded_csv(uploaded)
-            need = {"ISBN", "등록기호", "등록번호", "별치기호"}
-            if not need.issubset(df.columns):
-                st.error("❌ CSV에 필요한 열이 없습니다: ISBN, 등록기호, 등록번호, 별치기호")
-                st.stop()
-
-            rows = df[["ISBN", "등록기호", "등록번호", "별치기호"]].dropna(subset=["ISBN"]).copy()
-            rows["별치기호"] = rows["별치기호"].fillna("")
-            jobs.extend(rows.values.tolist())
-        except Exception as e:
-            st.error(f"❌ CSV 읽기 실패: {e}")
-            st.stop()
-
-    if not jobs:
-        st.warning("변환할 항목이 없습니다.")
-        st.stop()
-
-    st.write(f"총 {len(jobs)}건 처리 중…")
-    prog = st.progress(0)
-
-    for i, (isbn, reg_mark, reg_no, copy_symbol) in enumerate(jobs, start=1):
-        record, marc_bytes, mrk_text, meta = run_and_export(
-            isbn,
-            reg_mark=reg_mark,
-            reg_no=reg_no,
-            copy_symbol=copy_symbol,
-            use_ai_940=True,
-            save_dir="./output",
-            preview_in_streamlit=True,
-        )
-
-        prog.progress(i / len(jobs))
-
-
 # ========== MRC/MRK Export Helpers ==========
 def record_to_mrk_from_record(rec: Record) -> str:
     lines = []
