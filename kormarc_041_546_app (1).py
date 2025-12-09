@@ -4803,9 +4803,10 @@ def generate_all_oneclick(isbn: str, reg_mark: str = "", reg_no: str = "", copy_
 # ⚠️ 여기서 700 정렬 함수 잠깐 빼고 직접 조인해봐
     mrk_text = "\n".join(mrk_strings)
 
-if DEBUG_UI:
-    print("===== FINAL MRK TEXT DUMP =====")
-    print(mrk_text)
+    # --- 디버그 출력 (옵션) ---
+    if DEBUG_UI:
+        print("===== FINAL MRK TEXT DUMP =====")
+        print(mrk_text)
 
         
     # Record 객체 생성
@@ -4839,11 +4840,12 @@ if DEBUG_UI:
 
     marc_bytes = marc_rec.as_marc()       # MRC 파일용 (바이너리)
     
-    
-    print("TAGS:", [f.tag for f in marc_rec.get_fields()])
-    print("MRK HEAD:\n", "\n".join(record_to_mrk_from_record(marc_rec).splitlines()[:10]))
-    print("[DEBUG] tag_300 =", tag_300)
-    print("[DEBUG] f_300 =", f_300)
+    # --- 디버그 출력 (옵션) ---
+    if DEBUG_UI:
+        print("TAGS:", [f.tag for f in marc_rec.get_fields()])
+        print("MRK HEAD:\n", "\n".join(record_to_mrk_from_record(marc_rec).splitlines()[:10]))
+        print("[DEBUG] tag_300 =", tag_300)
+        print("[DEBUG] f_300 =", f_300)
 
     _ai940_conn.commit()
 
