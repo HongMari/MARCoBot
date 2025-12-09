@@ -5102,7 +5102,7 @@ def save_marc_files(record: Record, save_dir: str, base_filename: str):
 import streamlit as st
 
 st.header("📚 ISBN → MARC (일괄 처리 지원)")
-st.checkbox("🧠 940 생성에 OpenAI 활용", value=True, key="use_ai_940")
+st.checkbox("🧠 940 생성에 OpenAI 활용", value=True, key="opt_use_ai_940")
 
 with st.form(key="isbn_form", clear_on_submit=False):
     st.text_input("🔹 단일 ISBN", placeholder="예: 9788937462849", key="single_isbn_input")
