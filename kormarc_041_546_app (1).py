@@ -4587,7 +4587,7 @@ def generate_all_oneclick(
     isbn: str, reg_mark: str = "", reg_no: str = "", copy_symbol: str = "", use_ai_940: bool = True
 ):
     # ======================================
-    # 타임 프로파일러
+    # ⏱️ 타임 프로파일러
     # ======================================
     import time
     _t = {}
@@ -4605,7 +4605,6 @@ def generate_all_oneclick(
                 lines.append(f"{k:20} : {(_t[k] - prev):.2f}s  (total {(_t[k] - base):.2f}s)")
                 prev = _t[k]
         lines.append("====================")
-
         txt = "\n".join(lines)
         if return_text:
             return txt
@@ -4673,14 +4672,12 @@ def generate_all_oneclick(
     _mark("245_246_700")
 
     # ---------------------------
-    # 90010 + 940 (내용은 동일하되 계산만 병렬화시킬 준비)
+    # 90010 + 940 (내용 동일, 계산만 병렬화)
     # ---------------------------
-    # 940은 계산량이 매우 크므로 병렬화 대상
     a_out, n = parse_245_a_n(marc245)
 
-    # 병렬로 돌릴 때 필요한 함수 안전 래핑
-    def _task_90010(item_local):
-        people = extract_people_from_aladin(item_local) if item_local else {}
+    def _task_90010(local_item):
+        people = extract_people_from_aladin(local_item) if local_item else {}
         return build_90010_from_wikidata(people, include_translator=False)
 
     def _task_940(a, has_n):
@@ -4689,12 +4686,12 @@ def generate_all_oneclick(
     _mark("90010_940_prepare")
 
     # ---------------------------
-    # 병렬화 5종 실행:
-    # 1) 발행지
-    # 2) 653
-    # 3) 056-prewarm
-    # 4) 90010
-    # 5) 940
+    # 병렬 Task 5개 준비
+    # 1) 발행지 bundle
+    # 2) 653 GPT
+    # 3) 056 prewarm
+    # 4) 90010 Wikidata
+    # 5) 940 Title
     # ---------------------------
     publisher_raw = (item or {}).get("publisher", "")
     pubdate = (item or {}).get("pubDate", "") or ""
@@ -4719,7 +4716,6 @@ def generate_all_oneclick(
         mrk_940 = future_940.result()
 
     _mark("parallel_all_done")
-
     # ---------------------------
     # bundle 디버그 출력 유지
     # ---------------------------
@@ -4734,7 +4730,7 @@ def generate_all_oneclick(
         dbg("[BUNDLE]", msg)
 
     # ======================================
-    # 260 (발행지 기반)
+    # 260 (발행지 기반 생성)
     # ======================================
     tag_260 = build_260(
         place_display=bundle["place_display"],
@@ -4744,7 +4740,7 @@ def generate_all_oneclick(
     f_260 = mrk_str_to_field(tag_260)
 
     # ======================================
-    # 008 — 기존 로직 동일
+    # 008
     # ======================================
     lang3_override = _lang3_from_tag041(tag_041_text) if tag_041_text else None
 
@@ -4765,16 +4761,18 @@ def generate_all_oneclick(
     _mark("260_008_done")
 
     # ======================================
-    # 653 후처리 (기존 로직 완전 동일)
+    # 653 후처리 (기존 로직 그대로)
     # ======================================
     f_653 = mrk_str_to_field(tag_653) if tag_653 else None
 
     def _normalize_kw_hint(arr):
-        s = set(); out = []
+        s = set()
+        out = []
         for w in (arr or []):
             w = (w or "").strip()
             if w and w not in s:
-                s.add(w); out.append(w)
+                s.add(w)
+                out.append(w)
         return sorted(out)[:7]
 
     try:
@@ -4789,7 +4787,7 @@ def generate_all_oneclick(
     _mark("653_postprocess")
 
     # ======================================
-    # 056 (최종 GPT 호출 — 기존 로직 그대로)
+    # 056 (최종 GPT 호출)
     # ======================================
     kdc_code = None
     try:
@@ -4798,7 +4796,7 @@ def generate_all_oneclick(
             ttbkey=ALADIN_TTB_KEY,
             openai_key=openai_key,
             model=model,
-            keywords_hint=kw_hint  # ← 병렬화 결과 반영
+            keywords_hint=kw_hint,   # 병렬 결과 활용
         )
         if kdc_code and not re.fullmatch(r"\d{1,3}", kdc_code):
             kdc_code = None
@@ -4811,7 +4809,7 @@ def generate_all_oneclick(
     _mark("056_final_done")
 
     # ======================================
-    # 490 / 830 (총서) — 기존 로직 유지
+    # 490 / 830 (총서)
     # ======================================
     tag_490, tag_830 = build_490_830_mrk_from_item(item)
     f_490 = mrk_str_to_field(tag_490)
@@ -4829,7 +4827,7 @@ def generate_all_oneclick(
     f_950 = mrk_str_to_field(tag_950)
 
     # ======================================
-    # 049
+    # 049 (등록기호)
     # ======================================
     field_049 = build_049(reg_mark, reg_no, copy_symbol)
     f_049 = mrk_str_to_field(field_049)
@@ -4837,7 +4835,7 @@ def generate_all_oneclick(
     _mark("rest_fields")
 
     # ======================================
-    # 조립 — 출력 순서 유지 (원본과 동일)
+    # 조립 시작 (원본 순서 그대로)
     # ======================================
     pieces.append((field_008, "=008  " + data_008))
 
@@ -4927,7 +4925,6 @@ def generate_all_oneclick(
         pieces.append((f_049, field_049))
 
     _mark("assemble_done")
-
     # ======================================
     # MRK 문자열 생성
     # ======================================
@@ -4976,7 +4973,7 @@ def generate_all_oneclick(
     _show()
 
     # ======================================
-    # Streamlit 화면에 프로파일 표시
+    # Streamlit 화면에도 타임 프로파일 표시
     # ======================================
     profile_text = _show(return_text=True)
     try:
@@ -4987,6 +4984,177 @@ def generate_all_oneclick(
         pass
 
     return marc_rec, marc_rec.as_marc(), mrk_text, meta
+
+
+# =====================================================================
+# RUN & EXPORT — 원래 네 코드의 원클릭 처리 함수 (정상 복원본)
+# =====================================================================
+def run_and_export(
+    isbn: str,
+    *,
+    reg_mark: str = "",
+    reg_no: str = "",
+    copy_symbol: str = "",
+    use_ai_940: bool = True,
+    save_dir: str = "./output",
+    preview_in_streamlit: bool = True,
+):
+    record, marc_bytes, mrk_text, meta = generate_all_oneclick(
+        isbn,
+        reg_mark=reg_mark,
+        reg_no=reg_no,
+        copy_symbol=copy_symbol,
+        use_ai_940=use_ai_940,
+    )
+
+    save_marc_files(record, save_dir, isbn)
+
+    if preview_in_streamlit:
+        try:
+            import streamlit as st
+            st.success(f"📦 {isbn} 변환 완료 (MRC/MRK 저장됨)")
+
+            with st.expander("MRK 미리보기", expanded=True):
+                st.text_area("MRK", mrk_text, height=320)
+
+            st.download_button(
+                "📘 MARC (mrc) 다운로드",
+                data=marc_bytes,
+                file_name=f"{isbn}.mrc",
+                mime="application/marc",
+            )
+            st.download_button(
+                "🧾 MARC (mrk) 다운로드",
+                data=mrk_text,
+                file_name=f"{isbn}.mrk",
+                mime="text/plain",
+            )
+        except Exception:
+            pass
+
+    return record, marc_bytes, mrk_text, meta
+
+
+# =====================================================================
+# HELPER: Record → MRK 변환
+# =====================================================================
+def record_to_mrk_from_record(rec: Record) -> str:
+    lines = []
+    leader = rec.leader.decode("utf-8") if isinstance(rec.leader, (bytes, bytearray)) else str(rec.leader)
+    lines.append("=LDR  " + leader)
+
+    for f in rec.get_fields():
+        tag = f.tag
+
+        if tag.isdigit() and int(tag) < 10:
+            lines.append(f"={tag}  " + (f.data or ""))
+            continue
+
+        ind1 = (f.indicators[0] if getattr(f, "indicators", None) else " ") or " "
+        ind2 = (f.indicators[1] if getattr(f, "indicators", None) else " ") or " "
+        ind1_disp = "\\" if ind1 == " " else ind1
+        ind2_disp = "\\" if ind2 == " " else ind2
+
+        parts = ""
+        subs = getattr(f, "subfields", None)
+
+        if isinstance(subs, list) and subs and isinstance(subs[0], Subfield):
+            for s in subs:
+                parts += f"${s.code}{s.value}"
+        elif isinstance(subs, list):
+            it = iter(subs)
+            for code, val in zip(it, it):
+                parts += f"${code}{val}"
+        else:
+            try:
+                for s in f:
+                    parts += f"${s.code}{s.value}"
+            except:
+                pass
+
+        lines.append(f"={tag}  {ind1_disp}{ind2_disp}{parts}")
+
+    return "\n".join(lines)
+
+
+# =====================================================================
+# HELPER: 저장
+# =====================================================================
+def save_marc_files(record: Record, save_dir: str, base_filename: str):
+    import os
+    os.makedirs(save_dir, exist_ok=True)
+
+    mrc_path = os.path.join(save_dir, f"{base_filename}.mrc")
+    with open(mrc_path, "wb") as f:
+        f.write(record.as_marc())
+
+    mrk_path = os.path.join(save_dir, f"{base_filename}.mrk")
+    mrk_text = record_to_mrk_from_record(record)
+    with open(mrk_path, "w", encoding="utf-8") as f:
+        f.write(mrk_text)
+
+    return mrc_path, mrk_path
+
+
+# =====================================================================
+# STREAMLIT UI — 원본 기반 복원
+# =====================================================================
+import streamlit as st
+
+st.header("📚 ISBN → MARC (일괄 처리 지원)")
+st.checkbox("🧠 940 생성에 OpenAI 활용", value=True, key="use_ai_940")
+
+with st.form(key="isbn_form", clear_on_submit=False):
+    st.text_input("🔹 단일 ISBN", placeholder="예: 9788937462849", key="single_isbn_input")
+    st.file_uploader(
+        "📁 CSV 업로드 (UTF-8, 열: ISBN, 등록기호, 등록번호, 별치기호)",
+        type=["csv"],
+        key="csv_uploader"
+    )
+    submitted = st.form_submit_button("🚀 변환 실행", use_container_width=True)
+
+if submitted:
+    single_isbn = (st.session_state.get("single_isbn_input") or "").strip()
+    uploaded = st.session_state.get("csv_uploader")
+
+    jobs = []
+    if single_isbn:
+        jobs.append([single_isbn, "", "", ""])
+
+    if uploaded is not None:
+        try:
+            df = load_uploaded_csv(uploaded)
+            need = {"ISBN", "등록기호", "등록번호", "별치기호"}
+            if not need.issubset(df.columns):
+                st.error("❌ CSV에 필요한 열이 없습니다: ISBN, 등록기호, 등록번호, 별치기호")
+                st.stop()
+
+            rows = df[["ISBN", "등록기호", "등록번호", "별치기호"]].dropna(subset=["ISBN"]).copy()
+            rows["별치기호"] = rows["별치기호"].fillna("")
+            jobs.extend(rows.values.tolist())
+        except Exception as e:
+            st.error(f"❌ CSV 읽기 실패: {e}")
+            st.stop()
+
+    if not jobs:
+        st.warning("변환할 항목이 없습니다.")
+        st.stop()
+
+    st.write(f"총 {len(jobs)}건 처리 중…")
+    prog = st.progress(0)
+
+    for i, (isbn, reg_mark, reg_no, copy_symbol) in enumerate(jobs, start=1):
+        record, marc_bytes, mrk_text, meta = run_and_export(
+            isbn,
+            reg_mark=reg_mark,
+            reg_no=reg_no,
+            copy_symbol=copy_symbol,
+            use_ai_940=True,
+            save_dir="./output",
+            preview_in_streamlit=True,
+        )
+
+        prog.progress(i / len(jobs))
 
 
 # ========== MRC/MRK Export Helpers ==========
