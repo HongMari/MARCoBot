@@ -4239,7 +4239,7 @@ def get_kdc_from_isbn(isbn13: str, ttbkey: Optional[str], openai_key: str, model
             "description": (info.description[:600] + "…") if info.description and len(info.description) > 600 else info.description,
             "toc": info.toc,
             })
-return code
+    return code
 
 # (김: 추가) mrc 파일 생성 (객체변환)
 def mrk_str_to_field(line):
